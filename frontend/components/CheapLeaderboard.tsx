@@ -16,6 +16,7 @@ async function fetchCheapStocks(): Promise<Row[]> {
   const { data } = await db.from('valuations')
     .select('stock_id,ttm_eps,cheap_pe,cheap_price,current_price,status,stocks(name,industry,market)')
     .eq('status', '便宜')
+    .gt('current_price', 0)
     .order('current_price', { ascending: true })
     .limit(50)
       if (!data) return []

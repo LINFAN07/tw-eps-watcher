@@ -100,7 +100,7 @@ def calculate_valuation(stock_id: str) -> dict | None:
     ttm_eps       = float(eps_df.tail(4)["eps"].sum())
     current_price = float(price_df.iloc[-1]["close_price"])
 
-    if ttm_eps <= 0:
+    if ttm_eps <= 0 or current_price <= 0:
         status = "無法計算"
     elif current_price <= ttm_eps * cheap_pe:
         status = "便宜"
