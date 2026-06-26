@@ -1,0 +1,17 @@
+# 環境變數（含 API 金鑰，絕對不能上傳）
+.env
+.env.*
+
+# 下載進度記錄（本機暫存，不需版控）
+scripts/init_progress.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 系統檔
+.DS_Store
+Thumbs.db

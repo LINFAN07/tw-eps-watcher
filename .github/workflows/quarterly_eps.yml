@@ -1,0 +1,41 @@
+name: 季度 EPS 更新
+
+on:
+  schedule:
+    # Q1 財報季（3月底結帳，5/1~5/15 申報）
+    - cron: '0 7 1-15 5 1-5'
+    # Q2 財報季（6月底結帳，8/1~8/14 申報）
+    - cron: '0 7 1-14 8 1-5'
+    # Q3 財報季（9月底結帳，10/1~11/14 申報）
+    - cron: '0 7 1-14 10 1-5'
+    - cron: '0 7 1-14 11 1-5'
+    # Q4/年報財報季（12月底結帳，隔年1/1~3/31 申報）
+    - cron: '0 7 * 1-3 1-5'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # EPS 下載最多 6 小時（2524 支 × 6.5 秒）
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv pandas
+
+      - name: 執行季度 EPS 更新
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        # quarterly_eps_update.py 會 import calculate_valuation，需在 scripts/ 內執行
+        working-directory: scripts
+        run: python quarterly_eps_update.py
