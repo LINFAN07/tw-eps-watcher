@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid,
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 
@@ -33,54 +33,52 @@ export default function PERiverChart({ code }: { code: string }) {
   if (loading) return <div className="h-80 flex items-center justify-center text-gray-400">載入圖表中...</div>
   if (error || data.length === 0) return <div className="h-80 flex items-center justify-center text-gray-400">圖表資料不足</div>
 
-  // X 軸：每年顯示一個刻度
+  // X 軸只顯示每年一個刻度
   const yearTicks = [...new Set(data.map(d => d.date.slice(0, 4)))].map(
     y => data.find(d => d.date.startsWith(y))!.date
   )
 
+  const labelMap: Record<string, string> = {
+    price: '現價', cheap: '便宜價', fair: '合理價', expensive: '昂貴價',
+  }
+
   return (
     <ResponsiveContainer width="100%" height={380}>
-      <ComposedChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis
           dataKey="date"
           ticks={yearTicks}
-          tickFormatter={d => d.slice(0, 4)}
+          tickFormatter={(d: string) => d.slice(0, 4)}
           tick={{ fontSize: 12, fill: '#9ca3af' }}
         />
         <YAxis
+          tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)}
           tick={{ fontSize: 12, fill: '#9ca3af' }}
-          tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
           width={50}
         />
         <Tooltip
-          formatter={(v, name) => {
-            const labels: Record<string, string> = {
-              price: '現價', cheap: '便宜價', fair: '合理價', expensive: '昂貴價',
-            }
-            const num = typeof v === 'number' ? v.toFixed(2) : String(v ?? '')
-            return [num, labels[String(name)] ?? String(name)]
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null
+            return (
+              <div className="bg-white border border-gray-200 rounded-lg shadow p-2 text-xs">
+                <p className="text-gray-500 mb-1">{String(label)}</p>
+                {payload.map(p => (
+                  <p key={String(p.dataKey)} style={{ color: p.stroke ?? p.color }}>
+                    {labelMap[String(p.dataKey)] ?? String(p.dataKey)}：{Number(p.value).toFixed(2)}
+                  </p>
+                ))}
+              </div>
+            )
           }}
-          labelFormatter={l => `日期：${l}`}
         />
-        <Legend formatter={v => ({ price: '現價', cheap: '便宜價', fair: '合理價', expensive: '昂貴價' }[String(v)] ?? String(v))} />
+        <Legend formatter={(v: string) => labelMap[v] ?? v} />
 
-        {/* 便宜～合理：綠色帶 */}
-        <Area type="monotone" dataKey="fair"  fill="#dcfce7" stroke="none" legendType="none" />
-        <Area type="monotone" dataKey="cheap" fill="#ffffff" stroke="none" legendType="none" baseLine={0} />
-
-        {/* 合理～昂貴：橘色帶 */}
-        <Area type="monotone" dataKey="expensive" fill="#fef3c7" stroke="none" legendType="none" />
-        <Area type="monotone" dataKey="fair"       fill="#ffffff" stroke="none" legendType="none" />
-
-        {/* 三條帶狀邊界線 */}
-        <Line type="monotone" dataKey="cheap"     stroke="#16a34a" strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
-        <Line type="monotone" dataKey="fair"      stroke="#2563eb" strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
-        <Line type="monotone" dataKey="expensive" stroke="#dc2626" strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
-
-        {/* 現價（實線，最顯眼） */}
-        <Line type="monotone" dataKey="price" stroke="#0f172a" strokeWidth={2} dot={false} />
-      </ComposedChart>
+        <Line type="monotone" dataKey="cheap"     stroke="#16a34a" strokeWidth={1.5} dot={false} strokeDasharray="5 3" name="cheap" />
+        <Line type="monotone" dataKey="fair"      stroke="#2563eb" strokeWidth={1.5} dot={false} strokeDasharray="5 3" name="fair" />
+        <Line type="monotone" dataKey="expensive" stroke="#dc2626" strokeWidth={1.5} dot={false} strokeDasharray="5 3" name="expensive" />
+        <Line type="monotone" dataKey="price"     stroke="#0f172a" strokeWidth={2}   dot={false} name="price" />
+      </LineChart>
     </ResponsiveContainer>
   )
 }
