@@ -16,6 +16,7 @@ import traceback
 from dotenv import load_dotenv
 from supabase import create_client
 import pandas as pd
+import numpy as np
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -84,6 +85,37 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFram
     return merged[(merged["pe"] >= PE_MIN) & (merged["pe"] <= PE_MAX)]
 
 
+def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
+    """
+    偵測最近 4 季是否有疑似一次性收益（正向離群季度）。
+    使用 IQR 方法：上界 = Q75 + 2.5 × IQR（最小 IQR 為 0.5 避免零除）。
+    若偵測到，將離群季度 cap 至上界後重算 TTM；否則回傳原始 TTM。
+    回傳 (normalized_ttm, warning_text or None)
+    """
+    all_eps  = eps_df["eps"].astype(float)
+    recent_4 = eps_df.tail(4)["eps"].astype(float)
+
+    q25, q75 = float(np.percentile(all_eps, 25)), float(np.percentile(all_eps, 75))
+    iqr = max(q75 - q25, 0.5)
+    upper_fence = q75 + 2.5 * iqr
+
+    outlier_mask = recent_4 > upper_fence
+    if not outlier_mask.any():
+        return float(recent_4.sum()), None
+
+    # 找出離群季度，組成警告文字
+    outlier_rows = eps_df.tail(4)[outlier_mask.values]
+    parts = [
+        f"{row['quarter_end_date'].strftime('%Y-%m-%d')} EPS {row['eps']:.2f} 元"
+        for _, row in outlier_rows.iterrows()
+    ]
+    warning = f"TTM EPS 含疑似一次性收益（{', '.join(parts)}；正常上界 {upper_fence:.2f} 元），估值已調整"
+
+    # 將離群季 cap 至上界，重算正規化 TTM
+    normalized_ttm = float(recent_4.clip(upper=upper_fence).sum())
+    return normalized_ttm, warning
+
+
 def calculate_valuation(stock_id: str) -> dict | None:
     eps_df   = fetch_eps(stock_id)
     price_df = fetch_prices(stock_id)
@@ -97,7 +129,9 @@ def calculate_valuation(stock_id: str) -> dict | None:
     cheap_pe, fair_pe, expensive_pe = (
         series["pe"].quantile(p / 100) for p in (PE_CHEAP, PE_FAIR, PE_EXPENSIVE)
     )
-    ttm_eps       = float(eps_df.tail(4)["eps"].sum())
+
+    raw_ttm_eps   = float(eps_df.tail(4)["eps"].sum())
+    ttm_eps, warning = detect_nonrecurring(eps_df)
     current_price = float(price_df.iloc[-1]["close_price"])
 
     if ttm_eps <= 0 or current_price <= 0:
@@ -121,6 +155,7 @@ def calculate_valuation(stock_id: str) -> dict | None:
         "expensive_price": r(ttm_eps * expensive_pe),
         "current_price":   r(current_price),
         "status":          status,
+        "warning":         warning,
     }
 
 

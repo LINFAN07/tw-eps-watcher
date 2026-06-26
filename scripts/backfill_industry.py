@@ -35,11 +35,12 @@ def run():
     # 只更新資料庫中已存在的股票（避免插入空名稱新股造成 NOT NULL 錯誤）
     industry_map = {r["stock_id"]: r["industry"] for r in updates}
 
+    # 用 page 變數避免覆蓋上方的 FinMind resp
     existing_ids, offset = [], 0
     while True:
-        resp = supabase.table("stocks").select("stock_id").range(offset, offset + 999).execute()
-        existing_ids.extend(r["stock_id"] for r in resp.data)
-        if len(resp.data) < 1000:
+        page = supabase.table("stocks").select("stock_id").range(offset, offset + 999).execute()
+        existing_ids.extend(r["stock_id"] for r in page.data)
+        if len(page.data) < 1000:
             break
         offset += 1000
 
@@ -59,7 +60,7 @@ def run():
         count += len(sids)
     print(f"  已更新 {count}/{len(matched)}")
 
-    print(f"\n完成！共更新 {len(updates)} 支股票產業資訊。")
+    print(f"\n完成！共更新 {count} 支股票產業資訊。")
 
     # 印出樣本確認
     sample = supabase.table("stocks").select("stock_id,name,industry").limit(5).execute()

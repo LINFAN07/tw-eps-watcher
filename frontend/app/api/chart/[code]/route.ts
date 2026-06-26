@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 
 // 取得一支股票的所有日收盤價（自動分頁，繞過 Supabase 1000 筆上限）
-async function fetchAllPrices(db: ReturnType<typeof import('@/lib/supabase').getSupabase>, stockId: string) {
+// 中途任一頁失敗即拋出錯誤，避免靜默回傳截斷的不完整資料
+async function fetchAllPrices(db: SupabaseClient, stockId: string) {
   const all: { date: string; close_price: number }[] = []
   let offset = 0
   while (true) {
-    const { data } = await db.from('daily_prices')
+    const { data, error } = await db.from('daily_prices')
       .select('date,close_price')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
-    if (!data) break
+    if (error || !data) throw new Error(`價格分頁查詢失敗（offset=${offset}）：${error?.message}`)
     all.push(...data)
     if (data.length < 1000) break
     offset += 1000
@@ -25,7 +27,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
 
   // P/E 百分位區間
   const { data: val } = await db.from('valuations')
-    .select('cheap_pe,fair_pe,expensive_pe,ttm_eps,current_price,status')
+    .select('cheap_pe,fair_pe,expensive_pe,ttm_eps,current_price,status,warning')
     .eq('stock_id', code)
     .single()
   if (!val) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -44,8 +46,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     return { date: epsRaw[base].quarter_end_date, ttm }
   }).filter(e => e.ttm > 0)
 
-  // 日收盤價，取每月最後一筆（約 120 點）
-  const prices = await fetchAllPrices(db, code)
+  // 日收盤價，取每月最後一筆（約 120 點）；失敗則回 500
+  let prices: Awaited<ReturnType<typeof fetchAllPrices>>
+  try {
+    prices = await fetchAllPrices(db, code)
+  } catch (e) {
+    return NextResponse.json({ error: '價格資料載入失敗' }, { status: 500 })
+  }
   const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
   const sampled = Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date))
@@ -64,6 +71,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
       expensive: +(ttm * Number(val.expensive_pe)).toFixed(2),
     }
   }).filter(Boolean)
+
+  // TTM 全為負時 chartData 為空（虧損股無法計算合理 P/E 帶）
+  if (chartData.length === 0) return NextResponse.json({ error: 'Insufficient chart data' }, { status: 404 })
 
   return NextResponse.json({ chartData, valuation: val })
 }

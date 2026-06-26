@@ -6,7 +6,8 @@
 CREATE TABLE IF NOT EXISTS stocks (
   stock_id    VARCHAR(10)  PRIMARY KEY,           -- 股票代碼，例如 "2330"
   name        VARCHAR(100) NOT NULL,              -- 公司名稱，例如 "台積電"
-  market      VARCHAR(10)  NOT NULL               -- "TWSE"（上市）或 "TPEx"（上櫃）
+  market      VARCHAR(10)  NOT NULL,              -- "TWSE"（上市）或 "TPEx"（上櫃）
+  industry    VARCHAR(100)                        -- 產業別，例如 "半導體"；由 backfill_industry.py 填入
 );
 
 -- 季度 EPS（稅後每股盈餘）
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS valuations (
   expensive_price  DECIMAL(10, 2),               -- 昂貴價 = TTM EPS × expensive_pe
   current_price    DECIMAL(10, 2),               -- 今日收盤價
   status           VARCHAR(10),                  -- "便宜" / "合理" / "昂貴" / "無法計算"
+  warning          TEXT,                         -- 非空時表示 TTM EPS 含疑似一次性收益，估值已調整
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 

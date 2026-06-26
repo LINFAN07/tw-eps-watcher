@@ -16,10 +16,19 @@ export default function SearchBox() {
     if (!query.trim()) { setResults([]); return }
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(async () => {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
-      setResults(await res.json())
-      setOpen(true)
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
+        // 非 200 回應（如 API 錯誤頁）不繼續解析 JSON
+        if (!res.ok) { setResults([]); return }
+        setResults(await res.json())
+        setOpen(true)
+      } catch {
+        // 網路錯誤或 JSON 解析失敗：清空結果，不顯示過時資料
+        setResults([])
+      }
     }, 300)
+    // 元件卸載時清除計時器，避免在已卸載元件上呼叫 setState
+    return () => { if (timer.current) clearTimeout(timer.current) }
   }, [query])
 
   function select(s: Stock) {

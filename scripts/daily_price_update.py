@@ -1,9 +1,9 @@
 """
 每日股價更新腳本（每個交易日收盤後執行）
 
-只需 2 次 API 呼叫即可取得全市場收盤價（TWSE + TPEx OpenAPI 免費無限制）。
+只需 3 次 API 呼叫即可取得全市場收盤價（TWSE + TPEx 上櫃 + TPEx 興櫃）。
 更新邏輯：
-  1. 取得當日全市場收盤價
+  1. 取得當日全市場收盤價（上市 + 上櫃 + 興櫃）
   2. 寫入 daily_prices 資料表
   3. 快速更新 valuations 現價與狀態（不重算歷史 P/E，只用現有區間）
 
@@ -27,6 +27,7 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 TWSE_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
 TPEX_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+ESB_URL  = "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics"
 
 
 def clean_price(s) -> float | None:
@@ -54,7 +55,25 @@ def fetch_tpex_prices() -> dict[str, float]:
         return {str(r.get("SecuritiesCompanyCode", "")).strip(): p
                 for r in data if (p := clean_price(r.get("Close")))}
     except Exception as e:
-        print(f"  TPEx 取得失敗: {e}")
+        print(f"  TPEx 上櫃取得失敗: {e}")
+        return {}
+
+
+def fetch_esb_prices() -> dict[str, float]:
+    """興櫃（第三市場）最新成交價，以 LatestPrice 為主、Average 為備"""
+    try:
+        data = requests.get(ESB_URL, timeout=30).json()
+        result = {}
+        for r in data:
+            code = str(r.get("SecuritiesCompanyCode", "")).strip()
+            if not code:
+                continue
+            price = clean_price(r.get("LatestPrice")) or clean_price(r.get("Average"))
+            if price:
+                result[code] = price
+        return result
+    except Exception as e:
+        print(f"  TPEx 興櫃取得失敗: {e}")
         return {}
 
 
@@ -111,12 +130,16 @@ def run():
     twse = fetch_twse_prices()
     print(f"  {len(twse)} 支")
 
-    print("取得上櫃股票收盤價（TPEx）...")
+    print("取得上櫃股票收盤價（TPEx 上櫃）...")
     tpex = fetch_tpex_prices()
     print(f"  {len(tpex)} 支")
 
-    # TWSE 與 TPEx 合併，若代碼重複以 TWSE 為準
-    all_prices = {**tpex, **twse}
+    print("取得興櫃股票收盤價（TPEx 興櫃）...")
+    esb = fetch_esb_prices()
+    print(f"  {len(esb)} 支")
+
+    # 三市場合併，優先順序：TWSE > TPEx 上櫃 > 興櫃
+    all_prices = {**esb, **tpex, **twse}
 
     if not all_prices:
         print("\n今日無交易資料（休市），結束。")

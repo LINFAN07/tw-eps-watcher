@@ -8,6 +8,7 @@ interface Valuation {
   expensive_price: number
   current_price: number
   status: string
+  warning?: string | null
   updated_at: string
 }
 
@@ -19,11 +20,19 @@ const statusStyle: Record<string, { bg: string; text: string; label: string }> =
 
 export default function ValuationCard({ v }: { v: Valuation }) {
   const style = statusStyle[v.status] ?? { bg: 'bg-gray-50 border-gray-200', text: 'text-gray-500 bg-gray-100', label: '未知' }
+  // TTM EPS 為零時（無法計算）顯示破折號，避免除以零
   const currentPE = v.ttm_eps > 0 ? (v.current_price / v.ttm_eps).toFixed(1) : '—'
+  // 強制轉為台北時間顯示
   const updated = v.updated_at ? new Date(v.updated_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '—'
 
   return (
     <div className={`rounded-2xl border p-6 ${style.bg}`}>
+      {v.warning && (
+        <div className="flex gap-2 items-start bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-sm text-amber-800">
+          <span className="mt-0.5 shrink-0">⚠️</span>
+          <span>{v.warning}</span>
+        </div>
+      )}
       <div className="flex items-start justify-between mb-4">
         <div>
           <p className="text-sm text-gray-500 mb-1">現價</p>
