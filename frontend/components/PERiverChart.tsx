@@ -63,7 +63,7 @@ export default function PERiverChart({ code }: { code: string }) {
           }}
           labelFormatter={l => `日期：${l}`}
         />
-        <Legend formatter={v => ({ price: '現價', cheap: '便宜價', fair: '合理價', expensive: '昂貴價' }[v] ?? v)} />
+        <Legend formatter={v => ({ price: '現價', cheap: '便宜價', fair: '合理價', expensive: '昂貴價' }[String(v)] ?? String(v))} />
 
         {/* 便宜～合理：綠色帶 */}
         <Area type="monotone" dataKey="fair"  fill="#dcfce7" stroke="none" legendType="none" />
