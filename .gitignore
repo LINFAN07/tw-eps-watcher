@@ -12,6 +12,11 @@ __pycache__/
 .venv/
 venv/
 
+# Node.js（根目錄誤跑 npm install 產生的）
+node_modules/
+package.json
+package-lock.json
+
 # 系統檔
 .DS_Store
 Thumbs.db
