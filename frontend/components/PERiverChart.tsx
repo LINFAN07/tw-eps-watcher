@@ -54,11 +54,12 @@ export default function PERiverChart({ code }: { code: string }) {
           width={50}
         />
         <Tooltip
-          formatter={(v: number, name: string) => {
+          formatter={(v, name) => {
             const labels: Record<string, string> = {
               price: '現價', cheap: '便宜價', fair: '合理價', expensive: '昂貴價',
             }
-            return [v.toFixed(2), labels[name] ?? name]
+            const num = typeof v === 'number' ? v.toFixed(2) : String(v ?? '')
+            return [num, labels[String(name)] ?? String(name)]
           }}
           labelFormatter={l => `日期：${l}`}
         />
