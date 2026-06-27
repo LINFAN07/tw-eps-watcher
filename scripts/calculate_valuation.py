@@ -85,6 +85,14 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFram
     return merged[(merged["pe"] >= PE_MIN) & (merged["pe"] <= PE_MAX)]
 
 
+def compute_normalized_eps(eps_df: pd.DataFrame) -> float | None:
+    """取近 20 季（5 年）EPS 算術平均作為常態化基準；不足 8 季回傳 None"""
+    recent = eps_df.tail(20)["eps"].astype(float)
+    if len(recent) < 8:
+        return None
+    return float(recent.mean())
+
+
 def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
     """
     偵測最近 4 季是否有疑似一次性收益（正向離群季度）。
@@ -130,15 +138,56 @@ def calculate_valuation(stock_id: str) -> dict | None:
         series["pe"].quantile(p / 100) for p in (PE_CHEAP, PE_FAIR, PE_EXPENSIVE)
     )
 
-    raw_ttm_eps   = float(eps_df.tail(4)["eps"].sum())
     ttm_eps, warning = detect_nonrecurring(eps_df)
-    current_price = float(price_df.iloc[-1]["close_price"])
+    normalized_eps   = compute_normalized_eps(eps_df)
+    current_price    = float(price_df.iloc[-1]["close_price"])
 
-    if ttm_eps <= 0 or current_price <= 0:
+    # 決定計算基準 EPS：
+    # 優先嘗試以「5 年均值」替代谷底 TTM；
+    # 若兩者都低於 0.5 元，P/E 模型本身失效，改給強警告。
+    low_eps_warning = None
+    if (normalized_eps is not None and normalized_eps > 0.5 and
+            (ttm_eps <= 0 or ttm_eps < normalized_eps * 0.3)):
+        # TTM 遠低於長期均值，改用 5 年均值計算目標價
+        effective_eps = normalized_eps
+        low_eps_warning = (
+            f"TTM EPS {ttm_eps:.2f} 元遠低於常態水準"
+            f"（近 5 年均 EPS {normalized_eps:.2f} 元），"
+            f"估值已改用常態化 EPS 計算，現價 P/E 僅供參考"
+        )
+    elif ttm_eps <= 0.5 and (normalized_eps is None or normalized_eps <= 0.5):
+        # TTM 和長期均值都極低，P/E 估值架構在此失效
+        effective_eps = ttm_eps
+        norm_str = f"近 5 年均 {normalized_eps:.2f} 元" if normalized_eps is not None else "歷史資料不足"
+        low_eps_warning = (
+            f"EPS 長期偏低（TTM {ttm_eps:.2f} 元，{norm_str}），"
+            f"P/E 估值模型不適用——現價反映市場對未來獲利的預期，"
+            f"以下目標價僅供格局參考，不代表合理買點"
+        )
+    elif (normalized_eps is not None and normalized_eps > 0.5 and
+          ttm_eps > normalized_eps * 3):
+        # TTM 遠高於長期均值，可能處於獲利高峰，目標價偏樂觀
+        effective_eps = ttm_eps
+        norm_expensive = round(normalized_eps * expensive_pe, 2)
+        low_eps_warning = (
+            f"TTM EPS {ttm_eps:.2f} 元顯著高於長期均值（近 5 年均 {normalized_eps:.2f} 元），"
+            f"目前可能處於獲利高峰。若 EPS 回歸均值，以均值計算昂貴價約 {norm_expensive} 元，"
+            f"目標價已依現行 TTM EPS 計算，高峰期估值偏樂觀"
+        )
+    else:
+        effective_eps = ttm_eps
+
+    # 合併兩種警告（低 EPS 優先顯示）
+    combined_warning = (
+        f"{low_eps_warning}；{warning}" if (low_eps_warning and warning)
+        else low_eps_warning or warning
+    )
+
+    if effective_eps <= 0 or current_price <= 0:
         status = "無法計算"
-    elif current_price <= ttm_eps * cheap_pe:
+    elif current_price <= effective_eps * cheap_pe:
         status = "便宜"
-    elif current_price <= ttm_eps * fair_pe:
+    elif current_price <= effective_eps * fair_pe:
         status = "合理"
     else:
         status = "昂貴"
@@ -147,15 +196,16 @@ def calculate_valuation(stock_id: str) -> dict | None:
     return {
         "stock_id":        stock_id,
         "ttm_eps":         r(ttm_eps),
+        "normalized_eps":  r(normalized_eps) if normalized_eps is not None else None,
         "cheap_pe":        r(cheap_pe),
         "fair_pe":         r(fair_pe),
         "expensive_pe":    r(expensive_pe),
-        "cheap_price":     r(ttm_eps * cheap_pe),
-        "fair_price":      r(ttm_eps * fair_pe),
-        "expensive_price": r(ttm_eps * expensive_pe),
+        "cheap_price":     r(effective_eps * cheap_pe),
+        "fair_price":      r(effective_eps * fair_pe),
+        "expensive_price": r(effective_eps * expensive_pe),
         "current_price":   r(current_price),
         "status":          status,
-        "warning":         warning,
+        "warning":         combined_warning,
     }
 
 

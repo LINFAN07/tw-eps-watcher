@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { getSupabase } from '@/lib/supabase'
 import ValuationCard from '@/components/ValuationCard'
 import PERiverChart from '@/components/PERiverChart'
+import WatchlistButton from '@/components/WatchlistButton'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -13,11 +14,20 @@ export async function generateMetadata({ params }: Props) {
 
 async function fetchStock(code: string) {
   const db = getSupabase()
-  const [stockRes, valRes] = await Promise.all([
+  const [stockRes, valRes, epsRes] = await Promise.all([
     db.from('stocks').select('stock_id,name,market,industry').eq('stock_id', code).single(),
     db.from('valuations').select('*').eq('stock_id', code).single(),
+    // 取最近 8 季：前 4 季組成 TTM，後 4 季用來比較去年同期趨勢
+    db.from('eps_quarterly').select('quarter_end_date,eps')
+      .eq('stock_id', code).order('quarter_end_date', { ascending: false }).limit(8),
   ])
-  return { stock: stockRes.data, valuation: valRes.data }
+  const eps8 = epsRes.data ?? []
+  return {
+    stock: stockRes.data,
+    valuation: valRes.data,
+    ttmQuarters: eps8.slice(0, 4),
+    prevYearQuarters: eps8.slice(4, 8),
+  }
 }
 
 const marketLabel: Record<string, string> = {
@@ -30,7 +40,7 @@ const statusStyle: Record<string, string> = {
 
 export default async function StockPage({ params }: Props) {
   const { code } = await params
-  const { stock, valuation } = await fetchStock(code)
+  const { stock, valuation, ttmQuarters, prevYearQuarters } = await fetchStock(code)
 
   if (!stock) notFound()
 
@@ -43,31 +53,34 @@ export default async function StockPage({ params }: Props) {
 
       {/* 股票標頭 */}
       <div className="mb-6">
-        <div className="flex items-baseline gap-3 flex-wrap">
-          <h1 className="text-2xl font-bold">{stock.name}</h1>
-          <span className="font-mono text-lg text-gray-500">{stock.stock_id}</span>
-          {(marketLabel[stock.market]) && (
-            <span className="text-sm px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
-              {marketLabel[stock.market]}
-            </span>
-          )}
-          {stock.industry && (
-            <span className="text-sm px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">
-              {stock.industry}
-            </span>
-          )}
-          {valuation?.status && (
-            <span className={`text-sm font-semibold ${statusStyle[valuation.status] ?? 'text-gray-500'}`}>
-              {valuation.status}
-            </span>
-          )}
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h1 className="text-2xl font-bold">{stock.name}</h1>
+            <span className="font-mono text-lg text-gray-500">{stock.stock_id}</span>
+            {(marketLabel[stock.market]) && (
+              <span className="text-sm px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
+                {marketLabel[stock.market]}
+              </span>
+            )}
+            {stock.industry && (
+              <span className="text-sm px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">
+                {stock.industry}
+              </span>
+            )}
+            {valuation?.status && (
+              <span className={`text-sm font-semibold ${statusStyle[valuation.status] ?? 'text-gray-500'}`}>
+                {valuation.status}
+              </span>
+            )}
+          </div>
+          <WatchlistButton code={code} />
         </div>
       </div>
 
       {/* 估值卡片 */}
       {valuation ? (
         <div className="mb-8">
-          <ValuationCard v={valuation} />
+          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} />
         </div>
       ) : (
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border text-gray-400 text-center">

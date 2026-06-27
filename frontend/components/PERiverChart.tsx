@@ -43,8 +43,9 @@ export default function PERiverChart({ code }: { code: string }) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={380}>
-      <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+    <div className="h-[260px] sm:h-[380px]">
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis
           dataKey="date"
@@ -80,5 +81,6 @@ export default function PERiverChart({ code }: { code: string }) {
         <Line type="monotone" dataKey="price"     stroke="#0f172a" strokeWidth={2}   dot={false} name="price" />
       </LineChart>
     </ResponsiveContainer>
+    </div>
   )
 }
