@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import SearchBox from '@/components/SearchBox'
 import CheapLeaderboard from '@/components/CheapLeaderboard'
 import WatchlistPanel from '@/components/WatchlistPanel'
+import MarketThermometer from '@/components/MarketThermometer'
 
 export const revalidate = 3600 // 每小時重新抓一次排行榜
 
@@ -18,6 +19,17 @@ export default function Home() {
       <div className="mb-10 md:mb-14">
         <SearchBox />
       </div>
+
+      {/* 市場溫度計 */}
+      <section className="mb-10 md:mb-14">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="w-2 h-5 bg-blue-400 rounded-full inline-block" />
+          市場溫度計
+        </h2>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <MarketThermometer />
+        </div>
+      </section>
 
       {/* 自選股清單 */}
       <section className="mb-10 md:mb-14">

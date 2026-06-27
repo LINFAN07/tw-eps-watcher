@@ -4,6 +4,7 @@ import { getSupabase } from '@/lib/supabase'
 import ValuationCard from '@/components/ValuationCard'
 import PERiverChart from '@/components/PERiverChart'
 import WatchlistButton from '@/components/WatchlistButton'
+import YieldRiverChart from '@/components/YieldRiverChart'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -89,13 +90,24 @@ export default async function StockPage({ params }: Props) {
       )}
 
       {/* P/E 河流圖 */}
-      <section>
+      <section className="mb-8">
         <h2 className="text-base font-semibold text-gray-700 mb-3">本益比河流圖（10 年）</h2>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
           <PERiverChart code={code} />
         </div>
         <p className="text-xs text-gray-400 mt-2 px-1">
           綠線：便宜價｜藍線：合理價｜紅線：昂貴價｜黑線：實際收盤價。P/E 帶依每季 TTM EPS 動態調整。
+        </p>
+      </section>
+
+      {/* 殖利率河流圖 */}
+      <section>
+        <h2 className="text-base font-semibold text-gray-700 mb-3">殖利率河流圖（10 年）</h2>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <YieldRiverChart code={code} />
+        </div>
+        <p className="text-xs text-gray-400 mt-2 px-1">
+          綠線：高殖利率（便宜）｜藍線：中殖利率（合理）｜紅線：低殖利率（昂貴）｜黑線：實際收盤價。殖利率愈高代表股價相對便宜。
         </p>
       </section>
     </main>
