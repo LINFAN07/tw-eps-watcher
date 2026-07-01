@@ -82,7 +82,7 @@ export default async function StockPage({ params }: Props) {
       {/* 估值卡片 */}
       {valuation ? (
         <div className="mb-8">
-          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} />
+          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} />
         </div>
       ) : (
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border text-gray-400 text-center">
