@@ -5,6 +5,7 @@ import ValuationCard from '@/components/ValuationCard'
 import PERiverChart from '@/components/PERiverChart'
 import WatchlistButton from '@/components/WatchlistButton'
 import YieldRiverChart from '@/components/YieldRiverChart'
+import AltRiverChart from '@/components/AltRiverChart'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -16,7 +17,7 @@ export async function generateMetadata({ params }: Props) {
 async function fetchStock(code: string) {
   const db = getSupabase()
   const [stockRes, valRes, epsRes] = await Promise.all([
-    db.from('stocks').select('stock_id,name,market,industry').eq('stock_id', code).single(),
+    db.from('stocks').select('stock_id,name,market,industry,listed_shares').eq('stock_id', code).single(),
     db.from('valuations').select('*').eq('stock_id', code).single(),
     // 取最近 8 季：前 4 季組成 TTM，後 4 季用來比較去年同期趨勢
     db.from('eps_quarterly').select('quarter_end_date,eps')
@@ -101,7 +102,7 @@ export default async function StockPage({ params }: Props) {
       </section>
 
       {/* 殖利率河流圖 */}
-      <section>
+      <section className="mb-8">
         <h2 className="text-base font-semibold text-gray-700 mb-3">殖利率河流圖（10 年）</h2>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
           <YieldRiverChart code={code} />
@@ -110,6 +111,38 @@ export default async function StockPage({ params }: Props) {
           綠線：高殖利率（便宜）｜藍線：中殖利率（合理）｜紅線：低殖利率（昂貴）｜黑線：實際收盤價。殖利率愈高代表股價相對便宜。
         </p>
       </section>
+
+      {/* P/B 河流圖（有資料時才顯示） */}
+      {valuation?.pb_cheap_pb && (
+        <section className="mb-8">
+          <h2 className="text-base font-semibold text-gray-700 mb-3">
+            股價淨值比河流圖（P/B，10 年）
+          </h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+            <AltRiverChart code={code} model="pb" />
+          </div>
+          <p className="text-xs text-gray-400 mt-2 px-1">
+            以歷史 P/B 20/50/80 百分位為估值帶，適合資產型公司（銀行、地產、傳產）。
+            每股淨值 {valuation.pb_book_value} 元。
+          </p>
+        </section>
+      )}
+
+      {/* P/S 河流圖（有資料時才顯示） */}
+      {valuation?.ps_cheap_ps && (
+        <section>
+          <h2 className="text-base font-semibold text-gray-700 mb-3">
+            股價營收比河流圖（P/S，10 年）
+          </h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+            <AltRiverChart code={code} model="ps" />
+          </div>
+          <p className="text-xs text-gray-400 mt-2 px-1">
+            以歷史 P/S 20/50/80 百分位為估值帶，適合有營收但 EPS 偏低的成長型公司。
+            TTM 每股營收 {valuation.ps_revenue_per_share} 元。
+          </p>
+        </section>
+      )}
     </main>
   )
 }

@@ -16,6 +16,33 @@ interface Valuation {
   status: string
   warning?: string | null
   updated_at: string
+  // P/B 淨值比估值
+  pb_book_value?: number | null
+  pb_cheap_pb?: number | null
+  pb_fair_pb?: number | null
+  pb_expensive_pb?: number | null
+  pb_cheap_price?: number | null
+  pb_fair_price?: number | null
+  pb_expensive_price?: number | null
+  pb_status?: string | null
+  // P/S 營收比估值
+  ps_revenue_per_share?: number | null
+  ps_cheap_ps?: number | null
+  ps_fair_ps?: number | null
+  ps_expensive_ps?: number | null
+  ps_cheap_price?: number | null
+  ps_fair_price?: number | null
+  ps_expensive_price?: number | null
+  ps_status?: string | null
+  // P/FCF 自由現金流比估值
+  pfcf_per_share?: number | null
+  pfcf_cheap_pfcf?: number | null
+  pfcf_fair_pfcf?: number | null
+  pfcf_expensive_pfcf?: number | null
+  pfcf_cheap_price?: number | null
+  pfcf_fair_price?: number | null
+  pfcf_expensive_price?: number | null
+  pfcf_status?: string | null
 }
 
 const statusStyle: Record<string, { bg: string; text: string; label: string }> = {
@@ -125,16 +152,82 @@ export default function ValuationCard({
           </div>
         </div>
       )}
+
+      {/* P/B 淨值比估值（有資料時才顯示） */}
+      {v.pb_status && v.pb_status !== '無法計算' && v.pb_cheap_price != null && (
+        <div className="mt-4 pt-4 border-t border-current/10">
+          <p className="text-xs text-gray-500 mb-2">
+            P/B 淨值比估值
+            {v.pb_book_value != null && (
+              <span className="ml-2 text-gray-400">每股淨值 {v.pb_book_value} 元</span>
+            )}
+            <span className={`ml-2 text-xs font-semibold ${statusStyle[v.pb_status]?.text?.split(' ')[0] ?? 'text-gray-500'}`}>
+              {v.pb_status}
+            </span>
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <PriceLevel label="便宜價" price={v.pb_cheap_price}     ratio={v.pb_cheap_pb!}     color="text-green-600" ratioLabel="P/B" />
+            <PriceLevel label="合理價" price={v.pb_fair_price!}     ratio={v.pb_fair_pb!}      color="text-blue-600"  ratioLabel="P/B" />
+            <PriceLevel label="昂貴價" price={v.pb_expensive_price!} ratio={v.pb_expensive_pb!} color="text-red-500"   ratioLabel="P/B" />
+          </div>
+        </div>
+      )}
+
+      {/* P/S 營收比估值（有資料時才顯示） */}
+      {v.ps_status && v.ps_status !== '無法計算' && v.ps_cheap_price != null && (
+        <div className="mt-4 pt-4 border-t border-current/10">
+          <p className="text-xs text-gray-500 mb-2">
+            P/S 營收比估值
+            {v.ps_revenue_per_share != null && (
+              <span className="ml-2 text-gray-400">TTM 每股營收 {v.ps_revenue_per_share.toFixed(1)} 元</span>
+            )}
+            <span className={`ml-2 text-xs font-semibold ${statusStyle[v.ps_status]?.text?.split(' ')[0] ?? 'text-gray-500'}`}>
+              {v.ps_status}
+            </span>
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <PriceLevel label="便宜價" price={v.ps_cheap_price}      ratio={v.ps_cheap_ps!}     color="text-green-600" ratioLabel="P/S" />
+            <PriceLevel label="合理價" price={v.ps_fair_price!}      ratio={v.ps_fair_ps!}      color="text-blue-600"  ratioLabel="P/S" />
+            <PriceLevel label="昂貴價" price={v.ps_expensive_price!} ratio={v.ps_expensive_ps!} color="text-red-500"   ratioLabel="P/S" />
+          </div>
+        </div>
+      )}
+
+      {/* P/FCF 自由現金流比估值（有資料時才顯示） */}
+      {v.pfcf_status && v.pfcf_status !== '無法計算' && v.pfcf_cheap_price != null && (
+        <div className="mt-4 pt-4 border-t border-current/10">
+          <p className="text-xs text-gray-500 mb-2">
+            P/FCF 自由現金流比估值
+            {v.pfcf_per_share != null && (
+              <span className="ml-2 text-gray-400">TTM 每股 FCF {v.pfcf_per_share.toFixed(1)} 元</span>
+            )}
+            <span className={`ml-2 text-xs font-semibold ${statusStyle[v.pfcf_status]?.text?.split(' ')[0] ?? 'text-gray-500'}`}>
+              {v.pfcf_status}
+            </span>
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <PriceLevel label="便宜價" price={v.pfcf_cheap_price}      ratio={v.pfcf_cheap_pfcf!}     color="text-green-600" ratioLabel="P/FCF" />
+            <PriceLevel label="合理價" price={v.pfcf_fair_price!}      ratio={v.pfcf_fair_pfcf!}      color="text-blue-600"  ratioLabel="P/FCF" />
+            <PriceLevel label="昂貴價" price={v.pfcf_expensive_price!} ratio={v.pfcf_expensive_pfcf!} color="text-red-500"   ratioLabel="P/FCF" />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function PriceLevel({ label, price, pe, color }: { label: string; price: number; pe: number; color: string }) {
+function PriceLevel({
+  label, price, pe, ratio, color, ratioLabel = 'P/E',
+}: {
+  label: string; price: number; color: string; ratioLabel?: string
+  pe?: number; ratio?: number  // pe 供既有 P/E 段使用，ratio 供替代模型使用
+}) {
+  const displayRatio = ratio ?? pe
   return (
     <div className="bg-white/70 rounded-xl px-3 py-2 text-center">
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={`text-lg font-bold ${color}`}>{price ?? '—'}</p>
-      <p className="text-xs text-gray-400">P/E {pe}</p>
+      <p className="text-xs text-gray-400">{ratioLabel} {displayRatio}</p>
     </div>
   )
 }

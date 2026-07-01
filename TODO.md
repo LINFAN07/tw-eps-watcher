@@ -94,4 +94,40 @@
 ### 長期（影響力大，實作較複雜）
 
 - [ ] **到價通知**：使用者設定目標價，跌入便宜區間時寄送 Email 或 Telegram 通知
-- [ ] **金融股 P/B 估值**：偵測銀行 / 保險類股，自動切換為本淨比（P/B）估值模型
+- [ ] **金融股 P/B 估值**：已移至下方「替代估值模型 > P/B」區塊統一規劃
+
+---
+
+## 替代估值模型 📐
+
+> 當 P/E 模型不適用（TTM EPS ≤ 0.5 且長期均值也偏低）時，依企業型態切換的備用估值框架。
+> 資料來源均為 FinMind，無需額外付費。
+
+### P/B 股價淨值比（優先實作）
+
+- [x] **資料下載**：`scripts/download_balance_sheet.py`，從 FinMind `TaiwanStockBalanceSheet` 抓取每股淨值
+- [x] **估值計算**：`scripts/calculate_alt_valuations.py`，計算歷史 P/B 20/50/80 百分位
+- [x] **ValuationCard 顯示**：P/B 便宜/合理/昂貴價與目前 P/B 狀態顯示於估值卡片
+- [x] **P/B 河流圖**：`/api/chart/pb/[code]` + `AltRiverChart` 元件，在詳情頁顯示 P/B 帶狀圖
+- [ ] **適用對象標記**：資產型公司（地產、金融、傳產）優先顯示 P/B，其他股票作為補充參考
+
+### P/S 股價營收比
+
+- [x] **資料下載**：`scripts/download_monthly_revenue.py`，抓取月營收 + 更新流通股數
+- [x] **估值計算**：`scripts/calculate_alt_valuations.py`，計算 TTM 每股營收與 P/S 歷史百分位
+- [x] **ValuationCard 顯示**：P/S 便宜/合理/昂貴價顯示於估值卡片
+- [x] **P/S 河流圖**：`/api/chart/ps/[code]` + `AltRiverChart` 元件，在詳情頁顯示 P/S 帶狀圖
+- [ ] **適用對象標記**：有營收但長期虧損的成長股、新創類股
+
+### P/FCF 自由現金流比
+
+- [x] **資料下載**：`scripts/download_cash_flows.py`，抓取營業現金流與資本支出
+- [x] **估值計算**：`scripts/calculate_alt_valuations.py`，計算 TTM FCF per share 與 P/FCF 百分位
+- [x] **ValuationCard 顯示**：P/FCF 便宜/合理/昂貴價顯示於估值卡片
+- [ ] **P/FCF 河流圖**：尚未實作（FCF 數據品質不穩，暫不顯示河流圖）
+
+### 估值模型整合
+
+- [ ] **模型選擇器**：股票詳情頁提供切換標籤（P/E / P/B / P/S / P/FCF），讓使用者手動比較
+- [ ] **排行榜擴充**：便宜股排行榜支援依估值模型篩選（目前僅 P/E）
+- [x] **模型標注**：ValuationCard 顯示各模型名稱（P/B、P/S、P/FCF）與計算基準，避免誤解
