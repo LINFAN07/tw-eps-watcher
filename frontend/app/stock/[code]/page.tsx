@@ -130,7 +130,7 @@ export default async function StockPage({ params }: Props) {
 
       {/* P/S 河流圖（有資料時才顯示） */}
       {valuation?.ps_cheap_ps && (
-        <section>
+        <section className="mb-8">
           <h2 className="text-base font-semibold text-gray-700 mb-3">
             股價營收比河流圖（P/S，10 年）
           </h2>
@@ -140,6 +140,22 @@ export default async function StockPage({ params }: Props) {
           <p className="text-xs text-gray-400 mt-2 px-1">
             以歷史 P/S 20/50/80 百分位為估值帶，適合有營收但 EPS 偏低的成長型公司。
             TTM 每股營收 {valuation.ps_revenue_per_share} 元。
+          </p>
+        </section>
+      )}
+
+      {/* P/FCF 河流圖（有資料時才顯示） */}
+      {valuation?.pfcf_cheap_pfcf && (
+        <section>
+          <h2 className="text-base font-semibold text-gray-700 mb-3">
+            股價自由現金流比河流圖（P/FCF，10 年）
+          </h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+            <AltRiverChart code={code} model="pfcf" />
+          </div>
+          <p className="text-xs text-gray-400 mt-2 px-1">
+            以歷史 P/FCF 20/50/80 百分位為估值帶，適合帳面獲利被折舊壓低但現金流充沛的公司（電信、基建）。
+            TTM 每股 FCF {valuation.pfcf_per_share?.toFixed(1)} 元。
           </p>
         </section>
       )}

@@ -16,7 +16,7 @@ interface Point {
 
 interface Props {
   code: string
-  model: 'pb' | 'ps'  // 對應 /api/chart/pb/ 或 /api/chart/ps/
+  model: 'pb' | 'ps' | 'pfcf'  // 對應 /api/chart/pb/ 、 /api/chart/ps/ 或 /api/chart/pfcf/
 }
 
 const labelMap: Record<string, string> = {
