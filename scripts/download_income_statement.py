@@ -3,7 +3,8 @@
 從 FinMind TaiwanStockFinancialStatements 下載季度營業利益與稅後淨利，
 寫入 Supabase income_statement_quarterly 表。
 
-operating_income、net_income 單位：千元
+operating_income、net_income 單位：元（NTD）
+注意：此資料集與 CashFlowsStatement 不同，單位為「元」而非「千元」
 
 用法：
   python scripts/download_income_statement.py            # 全量下載
@@ -39,12 +40,12 @@ OPERATING_INCOME_TYPES = (
     "EBITDAOperatingIncome",
 )
 NET_INCOME_TYPES = (
-    "NetIncome",                               # 最常見
+    "IncomeAfterTaxes",                        # 主要（已 --discover 確認）
+    "IncomeFromContinuingOperations",          # 備用（部分公司同值）
+    "NetIncome",
     "ProfitLoss",
     "ProfitLossAttributableToOwnersOfParent",
     "ConsolidatedNetIncome",
-    "ProfitLossAfterTax",
-    "NetIncomeAttributableToParent",
 )
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
