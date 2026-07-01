@@ -19,6 +19,7 @@ interface Valuation {
   current_price: number
   status: string
   warning?: string | null
+  nonop_warning?: string | null
   updated_at: string
   pb_book_value?: number | null
   pb_cheap_pb?: number | null
@@ -132,11 +133,18 @@ export default function ValuationCard({
 
   return (
     <div className={`rounded-2xl border p-6 ${style.bg}`}>
-      {/* 警告橫幅（P/E 頁籤專屬）*/}
+      {/* P/E 估值品質警告（EPS 異常時顯示）*/}
       {active === 'pe' && v.warning && (
         <div className="flex gap-2 items-start bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-sm text-amber-800">
           <span className="mt-0.5 shrink-0">⚠️</span>
           <span>{v.warning}</span>
+        </div>
+      )}
+      {/* 業外收益警告（任何模型皆顯示，因為 TTM EPS 本身受影響）*/}
+      {v.nonop_warning && (
+        <div className="flex gap-2 items-start bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 mb-4 text-sm text-orange-800">
+          <span className="mt-0.5 shrink-0">🏭</span>
+          <span>{v.nonop_warning}</span>
         </div>
       )}
 

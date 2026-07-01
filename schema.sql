@@ -118,3 +118,17 @@ ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS pfcf_fair_price      DECIMAL(10, 2),
   ADD COLUMN IF NOT EXISTS pfcf_expensive_price DECIMAL(10, 2),
   ADD COLUMN IF NOT EXISTS pfcf_status          VARCHAR(10);
+
+-- 季度損益表（供業外收支偵測用；單位：千元）
+CREATE TABLE IF NOT EXISTS income_statement_quarterly (
+  stock_id         VARCHAR(10)    NOT NULL REFERENCES stocks(stock_id) ON DELETE CASCADE,
+  quarter_end_date DATE           NOT NULL,
+  operating_income DECIMAL(20, 2),  -- 營業利益（千元）
+  net_income       DECIMAL(20, 2),  -- 稅後淨利（千元）
+  PRIMARY KEY (stock_id, quarter_end_date)
+);
+CREATE INDEX IF NOT EXISTS idx_is_stock_date ON income_statement_quarterly(stock_id, quarter_end_date DESC);
+
+-- valuations 表新增業外收支警告欄位
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS nonop_warning TEXT;

@@ -7,6 +7,7 @@ export interface LeaderboardRow {
   current_price: number
   cheap_price: number
   warning?: string | null
+  nonop_warning?: string | null
   stocks: { name: string; industry: string; market: string } | null
 }
 

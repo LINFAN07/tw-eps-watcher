@@ -10,7 +10,7 @@ async function fetchModel(
 ): Promise<LeaderboardRow[]> {
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
-  const selectFields = `stock_id,current_price,${priceCol}${model === 'pe' ? ',warning' : ''},stocks(name,industry,market)`
+  const selectFields = `stock_id,current_price,${priceCol}${model === 'pe' ? ',warning,nonop_warning' : ''},stocks(name,industry,market)`
 
   const { data } = await db.from('valuations')
     .select(selectFields)
@@ -30,7 +30,9 @@ async function fetchModel(
   }))
 
   if (model === 'pe') {
-    rows = rows.filter(r => !r.warning || !UNRELIABLE_WARNINGS.some(kw => r.warning!.includes(kw)))
+    rows = rows
+      .filter(r => !r.warning || !UNRELIABLE_WARNINGS.some(kw => r.warning!.includes(kw)))
+      .filter(r => !r.nonop_warning)  // 業外收益佔比過高，TTM EPS 不可靠
   }
 
   return rows
