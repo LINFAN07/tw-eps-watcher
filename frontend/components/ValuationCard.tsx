@@ -29,6 +29,7 @@ interface Valuation {
   pb_fair_price?: number | null
   pb_expensive_price?: number | null
   pb_status?: string | null
+  operating_margin?: number | null
   ps_revenue_per_share?: number | null
   ps_cheap_ps?: number | null
   ps_fair_ps?: number | null
@@ -52,6 +53,20 @@ type Model = 'pe' | 'pb' | 'ps' | 'pfcf'
 const MODEL_LABELS: Record<Model, string> = {
   pe: 'P/E', pb: 'P/B', ps: 'P/S', pfcf: 'P/FCF',
 }
+
+// 品質門檻設定（新增指標時在此加一個陣列）
+const ROE_TIERS = [
+  { min: 15, valueColor: 'text-green-600', label: '優質', labelColor: 'text-green-500' },
+  { min: 8,  valueColor: 'text-amber-500', label: '普通', labelColor: 'text-amber-400' },
+  { min: 0,  valueColor: 'text-red-500',   label: '偏低', labelColor: 'text-red-400'   },
+]
+
+const MARGIN_TIERS = [
+  { min: 20,                    valueColor: 'text-green-600', label: '優質', labelColor: 'text-green-500' },
+  { min: 10,                    valueColor: 'text-amber-500', label: '普通', labelColor: 'text-amber-400' },
+  { min: 0,                     valueColor: 'text-red-500',   label: '偏低', labelColor: 'text-red-400'   },
+  { min: Number.NEGATIVE_INFINITY, valueColor: 'text-red-600', label: '虧損', labelColor: 'text-red-600' },
+]
 
 const statusStyle: Record<string, { bg: string; text: string; label: string }> = {
   '便宜': { bg: 'bg-green-50 border-green-200', text: 'text-green-700 bg-green-100', label: '低估' },
@@ -123,6 +138,16 @@ export default function ValuationCard({
       : '—'
 
   const updated = v.updated_at ? new Date(v.updated_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '—'
+
+  // ROE = TTM EPS ÷ 每股淨值（每股基礎，單位抵銷）
+  const roe = (v.ttm_eps > 0 && v.pb_book_value != null && v.pb_book_value > 0)
+    ? (v.ttm_eps / v.pb_book_value) * 100
+    : null
+  const roeTier = roe != null ? ROE_TIERS.find(t => roe >= t.min) ?? null : null
+
+  const marginTier = (v.operating_margin != null)
+    ? MARGIN_TIERS.find(t => v.operating_margin! >= t.min) ?? null
+    : null
 
   const prevTTM = prevYearQuarters.length === 4
     ? prevYearQuarters.reduce((s, q) => s + q.eps, 0)
@@ -245,6 +270,28 @@ export default function ValuationCard({
         )}
         <span className="basis-full text-xs text-gray-400 mt-1">更新：{updated}</span>
       </div>
+
+      {/* 品質指標列（固定顯示，不隨 Tab 切換）*/}
+      {(roeTier != null || marginTier != null) && (
+        <div className="mt-3 pt-3 border-t border-current/10 flex items-center gap-3 text-sm text-gray-600 flex-wrap">
+          <span className="text-xs text-gray-400">品質</span>
+          {roeTier != null && (
+            <span className="flex items-center gap-1">
+              <span>ROE</span>
+              <strong className={roeTier.valueColor}>{roe!.toFixed(1)}%</strong>
+              <span className={`text-xs ${roeTier.labelColor}`}>{roeTier.label}</span>
+            </span>
+          )}
+          {roeTier != null && marginTier != null && <span className="text-gray-300">·</span>}
+          {marginTier != null && (
+            <span className="flex items-center gap-1">
+              <span>營業利益率</span>
+              <strong className={marginTier.valueColor}>{v.operating_margin!.toFixed(1)}%</strong>
+              <span className={`text-xs ${marginTier.labelColor}`}>{marginTier.label}</span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 近 4 季 EPS 明細（P/E 頁籤專屬）*/}
       {active === 'pe' && ttmQuarters.length === 4 && (

@@ -132,3 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_is_stock_date ON income_statement_quarterly(stock
 -- valuations 表新增業外收支警告欄位
 ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS nonop_warning TEXT;
+
+-- 品質指標擴充
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS operating_margin DECIMAL(6, 2);  -- TTM 營業利益率（%）

@@ -59,10 +59,17 @@
 - [ ] 調查興櫃股票的 EPS 缺漏情況（ESB API 僅提供股價，EPS 仍需 FinMind）
 - [ ] 確認季度 EPS 更新排程在財報季正確觸發
 
+### 公司品質指標
+
+- [x] **ROE（股東報酬率）**：TTM EPS ÷ 每股淨值，直接在 ValuationCard 底部顯示（≥15% 綠色優質、8–15% 橘色普通、<8% 紅色偏低）
+- [ ] **負債比**：需從 FinMind `TaiwanStockBalanceSheet` 額外下載 `TotalAssets` + `TotalLiabilities`（約 4.5 小時），計算後顯示於品質指標列
+- [x] **營業利益率**：`income_statement_quarterly.operating_income` ÷ TTM 月營收，1471 支股票已計算完成，寫入 `valuations.operating_margin`
+
 ### 估值模型改善
 
-- [ ] 評估是否需要針對銀行 / 金融股採用不同估值方法（本淨比而非本益比）
+- [x] 評估是否需要針對銀行 / 金融股採用不同估值方法（本淨比而非本益比）→ 已實作產業自動推薦邏輯
 - [ ] 長期：考慮加入殖利率估值帶（股息殖利率河流圖）
+- [x] **業外收支偵測（賣祖產警告）**：下載損益表 `TaiwanStockFinancialStatements`，比對「營業利益」vs「稅後淨利」。若（稅後淨利 − 營業利益）/ 稅後淨利 > 30%，寫入 `valuations.nonop_warning`；前端顯示橘色警告橫幅，P/E 排行榜自動排除（309 支股票受影響）
 
 ### 前端改善
 
@@ -109,7 +116,7 @@
 - [x] **估值計算**：`scripts/calculate_alt_valuations.py`，計算歷史 P/B 20/50/80 百分位
 - [x] **ValuationCard 顯示**：P/B 便宜/合理/昂貴價與目前 P/B 狀態顯示於估值卡片
 - [x] **P/B 河流圖**：`/api/chart/pb/[code]` + `AltRiverChart` 元件，在詳情頁顯示 P/B 帶狀圖
-- [ ] **適用對象標記**：資產型公司（地產、金融、傳產）優先顯示 P/B，其他股票作為補充參考
+- [x] **適用對象標記**：資產型公司（地產、金融、傳產）優先顯示 P/B，其他股票作為補充參考
 
 ### P/S 股價營收比
 
@@ -117,17 +124,17 @@
 - [x] **估值計算**：`scripts/calculate_alt_valuations.py`，計算 TTM 每股營收與 P/S 歷史百分位
 - [x] **ValuationCard 顯示**：P/S 便宜/合理/昂貴價顯示於估值卡片
 - [x] **P/S 河流圖**：`/api/chart/ps/[code]` + `AltRiverChart` 元件，在詳情頁顯示 P/S 帶狀圖
-- [ ] **適用對象標記**：有營收但長期虧損的成長股、新創類股
+- [x] **適用對象標記**：有營收但長期虧損的成長股、新創類股
 
 ### P/FCF 自由現金流比
 
 - [x] **資料下載**：`scripts/download_cash_flows.py`，抓取營業現金流與資本支出
 - [x] **估值計算**：`scripts/calculate_alt_valuations.py`，計算 TTM FCF per share 與 P/FCF 百分位
 - [x] **ValuationCard 顯示**：P/FCF 便宜/合理/昂貴價顯示於估值卡片
-- [ ] **P/FCF 河流圖**：尚未實作（FCF 數據品質不穩，暫不顯示河流圖）
+- [x] **P/FCF 河流圖**：`/api/chart/pfcf/[code]` + `AltRiverChart` 元件，TTM FCF per share 滾動計算，詳情頁顯示 P/FCF 帶狀圖
 
 ### 估值模型整合
 
-- [ ] **模型選擇器**：股票詳情頁提供切換標籤（P/E / P/B / P/S / P/FCF），讓使用者手動比較
-- [ ] **排行榜擴充**：便宜股排行榜支援依估值模型篩選（目前僅 P/E）
+- [x] **模型選擇器**：股票詳情頁提供切換標籤（P/E / P/B / P/S / P/FCF），依產業自動推薦，支援手動切換
+- [x] **排行榜擴充**：便宜股排行榜新增 P/E / P/B / P/S / P/FCF 四模型 Tab，各顯示對應便宜股與數量
 - [x] **模型標注**：ValuationCard 顯示各模型名稱（P/B、P/S、P/FCF）與計算基準，避免誤解
