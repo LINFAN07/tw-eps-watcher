@@ -12,6 +12,7 @@ export interface LeaderboardRow {
   pb_book_value?: number | null
   operating_margin?: number | null
   stocks: { name: string; industry: string; market: string } | null
+  models?: string[]  // 多模型共識標籤，如 ['P/E', 'P/B', 'P/FCF']
 }
 
 export interface LeaderboardData {
@@ -19,15 +20,17 @@ export interface LeaderboardData {
   pb: LeaderboardRow[]
   ps: LeaderboardRow[]
   pfcf: LeaderboardRow[]
+  consensus: LeaderboardRow[]
 }
 
-type Model = 'pe' | 'pb' | 'ps' | 'pfcf'
+type Model = 'pe' | 'pb' | 'ps' | 'pfcf' | 'consensus'
 
 const MODEL_META: Record<Model, { label: string; desc: string }> = {
-  pe:   { label: 'P/E',   desc: '獲利估值' },
-  pb:   { label: 'P/B',   desc: '資產估值' },
-  ps:   { label: 'P/S',   desc: '營收估值' },
-  pfcf: { label: 'P/FCF', desc: '現金流估值' },
+  pe:        { label: 'P/E',   desc: '獲利估值' },
+  pb:        { label: 'P/B',   desc: '資產估值' },
+  ps:        { label: 'P/S',   desc: '營收估值' },
+  pfcf:      { label: 'P/FCF', desc: '現金流估值' },
+  consensus: { label: '多模型', desc: '共識精選' },
 }
 
 // 從 TTM EPS 和每股淨值推算 ROE
@@ -48,8 +51,8 @@ const ROE_TIERS    = [{ min: 15, cls: 'text-green-600' }, { min: 8, cls: 'text-a
 const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-amber-500' }, ...LOSS_TIERS]
 
 export default function CheapLeaderboardClient({ data }: { data: LeaderboardData }) {
-  const [model, setModel]         = useState<Model>('pe')
-  const [industry, setIndustry]   = useState<string>('全部')
+  const [model, setModel]               = useState<Model>('pe')
+  const [industry, setIndustry]         = useState<string>('全部')
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
   const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
 
@@ -87,7 +90,11 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
             <span>{MODEL_META[m].label}</span>
             <span className="hidden sm:inline text-xs ml-1 opacity-60">{MODEL_META[m].desc}</span>
             {data[m].length > 0 && (
-              <span className="ml-1 text-xs bg-green-100 text-green-700 px-1.5 rounded-full">
+              <span className={`ml-1 text-xs px-1.5 rounded-full ${
+                m === 'consensus'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-green-100 text-green-700'
+              }`}>
                 {data[m].length}
               </span>
             )}
@@ -105,6 +112,13 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         <QualityToggle active={filterMargin} onClick={() => setFilterMargin(v => !v)} label="利益率 ≥ 10%" />
       </div>
 
+      {/* 多模型共識說明 */}
+      {model === 'consensus' && (
+        <p className="text-xs text-gray-400 mt-1 mb-2">
+          同時被 2 個以上估值模型認定為便宜，訊號可信度更高。排序：共識模型數量多 → 折價幅度大。
+        </p>
+      )}
+
       {filtered.length === 0 ? (
         <p className="text-gray-400 text-center py-8">此條件目前沒有符合的股票</p>
       ) : (
@@ -119,7 +133,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">ROE</th>
                 <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">利益率</th>
                 <th className="pb-3 pr-4 font-medium text-right">現價</th>
-                <th className="pb-3 pr-4 font-medium text-right hidden sm:table-cell">便宜價</th>
+                <th className="pb-3 pr-4 font-medium text-right hidden sm:table-cell">
+                  {model === 'consensus' ? '參考便宜價' : '便宜價'}
+                </th>
                 <th className="pb-3 font-medium text-right">折價</th>
               </tr>
             </thead>
@@ -138,6 +154,16 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                       <Link href={`/stock/${r.stock_id}`} className="text-gray-800 hover:text-blue-600">
                         {r.stocks?.name ?? '—'}
                       </Link>
+                      {/* 多模型共識徽章 */}
+                      {r.models && (
+                        <div className="flex gap-1 mt-0.5 flex-wrap">
+                          {r.models.map(m => (
+                            <span key={m} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium leading-tight">
+                              {m}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-gray-400 hidden md:table-cell">
                       {r.stocks?.industry ?? r.stocks?.market ?? '—'}
