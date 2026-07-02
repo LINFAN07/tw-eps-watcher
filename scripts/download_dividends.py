@@ -53,8 +53,17 @@ def finmind_get(dataset: str, stock_id: str, start_date: str) -> list:
 
 
 def fetch_all_stock_ids() -> list[str]:
-    resp = supabase.table("stocks").select("stock_id").execute()
-    return [r["stock_id"] for r in (resp.data or [])]
+    # Supabase 單次最多 1000 筆，需分頁取完整名冊
+    all_ids: list[str] = []
+    offset = 0
+    while True:
+        resp = supabase.table("stocks").select("stock_id").range(offset, offset + 999).execute()
+        batch = [r["stock_id"] for r in (resp.data or [])]
+        all_ids.extend(batch)
+        if len(batch) < 1000:
+            break
+        offset += 1000
+    return all_ids
 
 
 def download_stock_dividends(stock_id: str) -> int:
@@ -63,34 +72,47 @@ def download_stock_dividends(stock_id: str) -> int:
     if not raw:
         return 0
 
-    rows = []
+    # 依除息日合併加總（同一除息日可能有多筆：盈餘分配 + 法定盈餘公積）
+    by_date: dict[str, float] = {}
     for r in raw:
-        # FinMind TaiwanStockDividend 欄位：date（除息基準日）、CashDividend
-        ex_date      = r.get("date", "")
-        cash_div_raw = r.get("CashDividend", 0)
+        ex_date = r.get("CashExDividendTradingDate", "").strip()
+        if not ex_date:
+            continue  # 純除權（配股）或無現金股利，跳過
         try:
-            cash_div = float(cash_div_raw)
+            cash_div = float(r.get("CashEarningsDistribution", 0) or 0) \
+                     + float(r.get("CashStatutorySurplus", 0) or 0)
         except (TypeError, ValueError):
             cash_div = 0.0
-        if ex_date and cash_div > 0:
-            rows.append({
-                "stock_id":     stock_id,
-                "ex_date":      ex_date,
-                "cash_dividend": round(cash_div, 4),
-            })
+        if cash_div > 0:
+            by_date[ex_date] = by_date.get(ex_date, 0.0) + cash_div
 
-    if not rows:
+    if not by_date:
         return 0
 
-    # upsert 避免重複
+    rows = [
+        {"stock_id": stock_id, "ex_date": d, "cash_dividend": round(v, 4)}
+        for d, v in by_date.items()
+    ]
     supabase.table("dividends").upsert(rows, on_conflict="stock_id,ex_date").execute()
     return len(rows)
 
 
 def main():
-    stock_ids = fetch_all_stock_ids()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--skip-file", help="包含已處理股票代碼的文字檔（每行一個），跳過這些股票")
+    args = parser.parse_args()
+
+    skip: set[str] = set()
+    if args.skip_file:
+        with open(args.skip_file, encoding="utf-8") as f:
+            skip = {line.strip() for line in f if line.strip()}
+        print(f"跳過清單：{len(skip)} 支已處理股票")
+
+    all_ids = fetch_all_stock_ids()
+    stock_ids = [s for s in all_ids if s not in skip]
     total = len(stock_ids)
-    print(f"開始下載股利資料：{total} 支股票，起始日 {START_DATE}")
+    print(f"開始下載股利資料：{total} 支股票（全市場 {len(all_ids)} 支），起始日 {START_DATE}")
 
     written_total = 0
     for i, sid in enumerate(stock_ids, 1):

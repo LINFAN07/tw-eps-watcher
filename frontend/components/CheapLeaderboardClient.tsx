@@ -69,7 +69,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
   const filtered = rowsWithRoe
     .filter(r => industry === '全部' || (r.stocks?.industry || '其他') === industry)
     .filter(r => !filterRoe    || (r.roe ?? 0) >= 15)
-    .filter(r => !filterMargin || (r.operating_margin ?? 0) >= 10)
+    .filter(r => !filterMargin || r.operating_margin == null || r.operating_margin >= 10)
 
   return (
     <>
