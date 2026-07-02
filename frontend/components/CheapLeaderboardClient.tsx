@@ -142,8 +142,8 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                     <td className="py-3 pr-4 text-gray-400 hidden md:table-cell">
                       {r.stocks?.industry ?? r.stocks?.market ?? '—'}
                     </td>
-                    <td className={`py-3 pr-4 text-right font-medium hidden lg:table-cell ${roe != null ? qualityBadge(roe, ROE_TIERS) : 'text-gray-300'}`}>
-                      {roe != null ? `${roe.toFixed(1)}%` : '—'}
+                    <td className={`py-3 pr-4 text-right font-medium hidden lg:table-cell ${r.roe != null ? qualityBadge(r.roe, ROE_TIERS) : 'text-gray-300'}`}>
+                      {r.roe != null ? `${r.roe.toFixed(1)}%` : '—'}
                     </td>
                     <td className={`py-3 pr-4 text-right font-medium hidden lg:table-cell ${r.operating_margin != null ? qualityBadge(r.operating_margin, MARGIN_TIERS) : 'text-gray-300'}`}>
                       {r.operating_margin != null ? `${r.operating_margin.toFixed(1)}%` : '—'}
