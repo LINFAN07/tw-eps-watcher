@@ -50,8 +50,8 @@ const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-
 export default function CheapLeaderboardClient({ data }: { data: LeaderboardData }) {
   const [model, setModel]         = useState<Model>('pe')
   const [industry, setIndustry]   = useState<string>('全部')
-  const [filterRoe, setFilterRoe]       = useState(false)  // ROE ≥ 15%
-  const [filterMargin, setFilterMargin] = useState(false)  // 利益率 ≥ 10%
+  const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
+  const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
 
   const rows = data[model]
 
