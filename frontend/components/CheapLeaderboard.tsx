@@ -10,7 +10,8 @@ async function fetchModel(
 ): Promise<LeaderboardRow[]> {
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
-  const selectFields = `stock_id,current_price,${priceCol}${model === 'pe' ? ',warning,nonop_warning' : ''},stocks(name,industry,market)`
+  const peExtra   = model === 'pe' ? ',warning,nonop_warning' : ''
+  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra},stocks(name,industry,market)`
 
   const { data } = await db.from('valuations')
     .select(selectFields)
@@ -22,11 +23,14 @@ async function fetchModel(
   if (!data) return []
 
   let rows: LeaderboardRow[] = (data as unknown as Record<string, unknown>[]).map(r => ({
-    stock_id:      r.stock_id as string,
-    current_price: Number(r.current_price),
-    cheap_price:   Number(r[priceCol]),
-    warning:       (r.warning as string | null) ?? null,
-    stocks:        r.stocks as { name: string; industry: string; market: string } | null,
+    stock_id:         r.stock_id as string,
+    current_price:    Number(r.current_price),
+    cheap_price:      Number(r[priceCol]),
+    warning:          (r.warning as string | null) ?? null,
+    ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
+    pb_book_value:    r.pb_book_value != null ? Number(r.pb_book_value) : null,
+    operating_margin: r.operating_margin != null ? Number(r.operating_margin) : null,
+    stocks:           r.stocks as { name: string; industry: string; market: string } | null,
   }))
 
   if (model === 'pe') {

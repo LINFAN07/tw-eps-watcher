@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 
 export interface LeaderboardRow {
@@ -8,6 +8,9 @@ export interface LeaderboardRow {
   cheap_price: number
   warning?: string | null
   nonop_warning?: string | null
+  ttm_eps?: number | null
+  pb_book_value?: number | null
+  operating_margin?: number | null
   stocks: { name: string; industry: string; market: string } | null
 }
 
@@ -27,23 +30,46 @@ const MODEL_META: Record<Model, { label: string; desc: string }> = {
   pfcf: { label: 'P/FCF', desc: '現金流估值' },
 }
 
+// 從 TTM EPS 和每股淨值推算 ROE
+function calcRoe(row: LeaderboardRow): number | null {
+  if (row.ttm_eps != null && row.ttm_eps > 0 && row.pb_book_value != null && row.pb_book_value > 0) {
+    return (row.ttm_eps / row.pb_book_value) * 100
+  }
+  return null
+}
+
+// 品質徽章樣式
+function qualityBadge(value: number, tiers: { min: number; cls: string }[]): string {
+  return tiers.find(t => value >= t.min)?.cls ?? 'text-gray-400'
+}
+
+const LOSS_TIERS   = [{ min: 0, cls: 'text-red-500' }, { min: -Infinity, cls: 'text-red-600' }]
+const ROE_TIERS    = [{ min: 15, cls: 'text-green-600' }, { min: 8, cls: 'text-amber-500' }, ...LOSS_TIERS]
+const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-amber-500' }, ...LOSS_TIERS]
+
 export default function CheapLeaderboardClient({ data }: { data: LeaderboardData }) {
-  const [model, setModel]       = useState<Model>('pe')
-  const [selected, setSelected] = useState<string>('全部')
+  const [model, setModel]         = useState<Model>('pe')
+  const [industry, setIndustry]   = useState<string>('全部')
+  const [filterRoe, setFilterRoe]       = useState(false)  // ROE ≥ 15%
+  const [filterMargin, setFilterMargin] = useState(false)  // 利益率 ≥ 10%
 
   const rows = data[model]
 
-  const industries = ['全部', ...Array.from(
+  // ROE 預先計算一次，filter 和 render 共用（避免雙重計算）
+  const rowsWithRoe = useMemo(() => rows.map(r => ({ ...r, roe: calcRoe(r) })), [rows])
+
+  const industries = useMemo(() => ['全部', ...Array.from(
     rows.reduce((map, r) => {
       const ind = r.stocks?.industry || '其他'
       map.set(ind, (map.get(ind) ?? 0) + 1)
       return map
     }, new Map<string, number>())
-  ).sort((a, b) => b[1] - a[1]).map(([ind]) => ind)]
+  ).sort((a, b) => b[1] - a[1]).map(([ind]) => ind)], [rows])
 
-  const filtered = selected === '全部'
-    ? rows
-    : rows.filter(r => (r.stocks?.industry || '其他') === selected)
+  const filtered = rowsWithRoe
+    .filter(r => industry === '全部' || (r.stocks?.industry || '其他') === industry)
+    .filter(r => !filterRoe    || (r.roe ?? 0) >= 15)
+    .filter(r => !filterMargin || (r.operating_margin ?? 0) >= 10)
 
   return (
     <>
@@ -52,12 +78,10 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         {(Object.keys(MODEL_META) as Model[]).map(m => (
           <button
             key={m}
-            onClick={() => { setModel(m); setSelected('全部') }}
+            onClick={() => { setModel(m); setIndustry('全部') }}
             className={[
               'flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors',
-              model === m
-                ? 'bg-white shadow-sm text-gray-800'
-                : 'text-gray-500 hover:text-gray-700',
+              model === m ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700',
             ].join(' ')}
           >
             <span>{MODEL_META[m].label}</span>
@@ -72,10 +96,17 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
       </div>
 
       {/* 產業篩選 */}
-      <FilterBar industries={industries} selected={selected} onSelect={setSelected} />
+      <FilterBar industries={industries} selected={industry} onSelect={setIndustry} />
+
+      {/* 品質篩選 */}
+      <div className="flex items-center gap-2 mt-3 mb-1">
+        <span className="text-xs text-gray-400">品質篩選</span>
+        <QualityToggle active={filterRoe}    onClick={() => setFilterRoe(v => !v)}    label="ROE ≥ 15%" />
+        <QualityToggle active={filterMargin} onClick={() => setFilterMargin(v => !v)} label="利益率 ≥ 10%" />
+      </div>
 
       {filtered.length === 0 ? (
-        <p className="text-gray-400 text-center py-8">此條件目前沒有被低估的股票</p>
+        <p className="text-gray-400 text-center py-8">此條件目前沒有符合的股票</p>
       ) : (
         <div className="overflow-x-auto mt-4">
           <table className="w-full text-sm">
@@ -85,6 +116,8 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 <th className="pb-3 pr-4 font-medium">代碼</th>
                 <th className="pb-3 pr-4 font-medium">公司</th>
                 <th className="pb-3 pr-4 font-medium hidden md:table-cell">產業</th>
+                <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">ROE</th>
+                <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">利益率</th>
                 <th className="pb-3 pr-4 font-medium text-right">現價</th>
                 <th className="pb-3 pr-4 font-medium text-right hidden sm:table-cell">便宜價</th>
                 <th className="pb-3 font-medium text-right">折價</th>
@@ -92,9 +125,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
             </thead>
             <tbody>
               {filtered.map((r, i) => {
-                const discount  = (((r.cheap_price - r.current_price) / r.cheap_price) * 100).toFixed(1)
-                const name      = r.stocks?.name ?? '—'
-                const industry  = r.stocks?.industry ?? r.stocks?.market ?? '—'
+                const discount = (((r.cheap_price - r.current_price) / r.cheap_price) * 100).toFixed(1)
                 return (
                   <tr key={r.stock_id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
@@ -105,10 +136,18 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                     </td>
                     <td className="py-3 pr-4">
                       <Link href={`/stock/${r.stock_id}`} className="text-gray-800 hover:text-blue-600">
-                        {name}
+                        {r.stocks?.name ?? '—'}
                       </Link>
                     </td>
-                    <td className="py-3 pr-4 text-gray-400 hidden md:table-cell">{industry}</td>
+                    <td className="py-3 pr-4 text-gray-400 hidden md:table-cell">
+                      {r.stocks?.industry ?? r.stocks?.market ?? '—'}
+                    </td>
+                    <td className={`py-3 pr-4 text-right font-medium hidden lg:table-cell ${roe != null ? qualityBadge(roe, ROE_TIERS) : 'text-gray-300'}`}>
+                      {roe != null ? `${roe.toFixed(1)}%` : '—'}
+                    </td>
+                    <td className={`py-3 pr-4 text-right font-medium hidden lg:table-cell ${r.operating_margin != null ? qualityBadge(r.operating_margin, MARGIN_TIERS) : 'text-gray-300'}`}>
+                      {r.operating_margin != null ? `${r.operating_margin.toFixed(1)}%` : '—'}
+                    </td>
                     <td className="py-3 pr-4 text-right font-medium">{r.current_price}</td>
                     <td className="py-3 pr-4 text-right text-green-600 hidden sm:table-cell">{r.cheap_price}</td>
                     <td className="py-3 text-right">
@@ -127,9 +166,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
   )
 }
 
-function FilterBar({
-  industries, selected, onSelect,
-}: {
+function FilterBar({ industries, selected, onSelect }: {
   industries: string[]
   selected: string
   onSelect: (v: string) => void
@@ -150,5 +187,24 @@ function FilterBar({
         </button>
       ))}
     </div>
+  )
+}
+
+function QualityToggle({ active, onClick, label }: {
+  active: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`text-xs px-3 py-1 rounded-full border transition-colors font-medium ${
+        active
+          ? 'bg-green-600 text-white border-green-600'
+          : 'bg-white text-gray-500 border-gray-300 hover:border-green-400 hover:text-green-600'
+      }`}
+    >
+      {active ? '✓ ' : ''}{label}
+    </button>
   )
 }
