@@ -35,8 +35,6 @@ def fetch_income_data() -> dict[str, list[dict]]:
     while True:
         resp = supabase.table("income_statement_quarterly") \
             .select("stock_id,quarter_end_date,operating_income,net_income") \
-            .not_("operating_income", "is", None) \
-            .not_("net_income", "is", None) \
             .order("quarter_end_date", desc=True) \
             .range(offset, offset + 999) \
             .execute()
@@ -49,6 +47,9 @@ def fetch_income_data() -> dict[str, list[dict]]:
     # 按股票分組，只保留最新 4 季
     by_stock: dict[str, list[dict]] = {}
     for r in all_rows:
+        # 兩個欄位都有值才納入計算
+        if r["operating_income"] is None or r["net_income"] is None:
+            continue
         sid = r["stock_id"]
         if sid not in by_stock:
             by_stock[sid] = []
