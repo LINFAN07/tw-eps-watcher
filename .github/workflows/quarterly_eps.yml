@@ -40,12 +40,18 @@ jobs:
         working-directory: scripts
         run: python quarterly_eps_update.py
 
-      - name: 排程失敗 Telegram 通知
+      - name: 排程失敗 Email 通知
         if: failure()
-        uses: appleboy/telegram-action@v0.1.1
+        uses: dawidd6/action-send-mail@v3
         with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          message: |
-            ❌ [台股估值] 季度 EPS 更新失敗
-            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 季度 EPS 更新失敗"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            季度 EPS 更新排程執行失敗，請至以下連結查看錯誤日誌：
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
