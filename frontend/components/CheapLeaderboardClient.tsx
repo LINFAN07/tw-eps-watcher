@@ -151,8 +151,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
             <tbody>
               {filtered.map((r, i) => {
                 const discount = (((r.cheap_price - r.current_price) / r.cheap_price) * 100).toFixed(1)
+                const isLoss = (r.roe != null && r.roe < 0) || (r.operating_margin != null && r.operating_margin < 0)
                 return (
-                  <tr key={r.stock_id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                  <tr key={r.stock_id} className={`border-b transition-colors ${isLoss ? 'bg-red-50 hover:bg-red-100 border-red-100' : 'border-gray-50 hover:bg-gray-50'}`}>
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
                     <td className="py-3 pr-4">
                       <Link href={`/stock/${r.stock_id}`} className="font-mono font-bold text-blue-600 hover:underline">
@@ -172,6 +173,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                             </span>
                           ))}
                         </div>
+                      )}
+                      {isLoss && (
+                        <div className="text-[10px] text-red-500 mt-0.5">⚠️ 目前虧損，歷史估值帶可能失真</div>
                       )}
                     </td>
                     <td className="py-3 pr-4 text-gray-400 hidden md:table-cell">
