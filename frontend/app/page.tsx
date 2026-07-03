@@ -12,7 +12,7 @@ export default function Home() {
       {/* 標題 */}
       <div className="text-center mb-8 md:mb-10">
         <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">台股估值查詢</h1>
-        <p className="text-gray-500">以本益比河流圖判斷股價是否被低估或高估</p>
+        <p className="text-gray-500"><span className="font-medium text-gray-700">「多模型估值」</span>找出台股的真實價值</p>
       </div>
 
       {/* 搜尋框 */}
