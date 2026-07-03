@@ -53,9 +53,9 @@ def get_stock_ids_with_dividends() -> list[str]:
 
 def get_current_price(stock_id: str) -> float | None:
     """從 valuations 取現價（避免重新查 daily_prices）"""
-    resp = supabase.table("valuations").select("current_price").eq("stock_id", stock_id).single().execute()
-    if resp.data and resp.data.get("current_price"):
-        return float(resp.data["current_price"])
+    resp = supabase.table("valuations").select("current_price").eq("stock_id", stock_id).limit(1).execute()
+    if resp.data and resp.data[0].get("current_price"):
+        return float(resp.data[0]["current_price"])
     return None
 
 
