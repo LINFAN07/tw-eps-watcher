@@ -36,9 +36,9 @@ const MODEL_META: Record<Model, { label: string; desc: string }> = {
 // 金融相關產業（無營業利益率，豁免利益率篩選）
 const FINANCIAL_KEYWORDS = ['金融', '保險', '銀行', '證券']
 
-// 從 TTM EPS 和每股淨值推算 ROE
+// 從 TTM EPS 和每股淨值推算 ROE（EPS 為負時回傳負 ROE；淨值為負時分母無意義，回傳 null）
 function calcRoe(row: LeaderboardRow): number | null {
-  if (row.ttm_eps != null && row.ttm_eps > 0 && row.pb_book_value != null && row.pb_book_value > 0) {
+  if (row.ttm_eps != null && row.pb_book_value != null && row.pb_book_value > 0) {
     return (row.ttm_eps / row.pb_book_value) * 100
   }
   return null
