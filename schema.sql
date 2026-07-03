@@ -141,3 +141,15 @@ ALTER TABLE valuations
 -- balance_sheet_quarterly 新增負債比欄位（每季追蹤）
 ALTER TABLE balance_sheet_quarterly
   ADD COLUMN IF NOT EXISTS debt_ratio DECIMAL(6, 2);  -- 當季負債比（%）
+
+-- 殖利率估值模型欄位
+-- 邏輯：殖利率高 = 股價便宜（便宜對應第 80 百分位殖利率）
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS yield_ttm_div         DECIMAL(10, 2),   -- TTM 現金股利（元）
+  ADD COLUMN IF NOT EXISTS yield_cheap_yield     DECIMAL(6, 4),    -- 歷史殖利率第 80 百分位（%）
+  ADD COLUMN IF NOT EXISTS yield_fair_yield      DECIMAL(6, 4),    -- 歷史殖利率第 50 百分位（%）
+  ADD COLUMN IF NOT EXISTS yield_expensive_yield DECIMAL(6, 4),    -- 歷史殖利率第 20 百分位（%）
+  ADD COLUMN IF NOT EXISTS yield_cheap_price     DECIMAL(10, 2),
+  ADD COLUMN IF NOT EXISTS yield_fair_price      DECIMAL(10, 2),
+  ADD COLUMN IF NOT EXISTS yield_expensive_price DECIMAL(10, 2),
+  ADD COLUMN IF NOT EXISTS yield_status          VARCHAR(10);

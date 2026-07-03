@@ -32,9 +32,10 @@ PB_MIN,   PB_MAX   = 0.1, 50.0
 PS_MIN,   PS_MAX   = 0.1, 200.0
 PFCF_MIN, PFCF_MAX = 0.1, 200.0
 
-MIN_PB_QUARTERS = 8   # P/B：至少 2 年季度資料
-MIN_PS_MONTHS   = 24  # P/S：至少 2 年月營收（TTM 需 12 個月，再加 12 個月用於計算 PS 序列）
-MIN_PFCF_QTRS   = 8   # P/FCF：至少 2 年季度資料
+MIN_PB_QUARTERS  = 8   # P/B：至少 2 年季度資料
+MIN_PS_MONTHS    = 24  # P/S：至少 2 年月營收（TTM 需 12 個月，再加 12 個月用於計算 PS 序列）
+MIN_PFCF_QTRS    = 8   # P/FCF：至少 2 年季度資料
+MIN_YIELD_MONTHS = 36  # 殖利率：至少 3 年月資料（需涵蓋多個配息週期）
 
 
 def _fetch_paged(table: str, filters: dict, columns: str) -> list:
@@ -275,6 +276,73 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     }
 
 
+# ─────────────── 殖利率估值帶 ───────────────
+
+def calculate_yield(stock_id: str, price_df: pd.DataFrame, current_price: float) -> dict:
+    rows = _fetch_paged("dividends", {"stock_id": stock_id}, "ex_date,cash_dividend")
+    if not rows:
+        return {}
+
+    div_df = pd.DataFrame(rows)
+    div_df["ex_date"]       = pd.to_datetime(div_df["ex_date"])
+    div_df["cash_dividend"] = pd.to_numeric(div_df["cash_dividend"], errors="coerce")
+    div_df = div_df[div_df["cash_dividend"] > 0].sort_values("ex_date").reset_index(drop=True)
+    if div_df.empty:
+        return {}
+
+    # 月採樣：取每月最後一筆收盤價
+    pf = price_df.copy()
+    pf["date"] = pd.to_datetime(pf["date"])
+    pf["ym"]   = pf["date"].dt.to_period("M")
+    monthly    = pf.groupby("ym").last().reset_index()
+
+    if len(monthly) < MIN_YIELD_MONTHS:
+        return {}
+
+    # 逐月計算 TTM 現金股利 → 殖利率序列
+    yield_series = []
+    for _, row in monthly.iterrows():
+        p_date = row["date"]
+        price  = float(row["close_price"])
+        if price <= 0:
+            continue
+        mask    = (div_df["ex_date"] <= p_date) & (div_df["ex_date"] > p_date - pd.Timedelta(days=365))
+        ttm_div = float(div_df[mask]["cash_dividend"].sum())
+        if ttm_div > 0:
+            yield_series.append(ttm_div / price)
+
+    if len(yield_series) < 10:
+        return {}
+
+    yield_arr       = np.array(yield_series)
+    cheap_yield     = float(np.percentile(yield_arr, 80))   # 高殖利率 = 股價便宜
+    fair_yield      = float(np.percentile(yield_arr, 50))
+    expensive_yield = float(np.percentile(yield_arr, 20))   # 低殖利率 = 股價昂貴
+
+    # 最新 TTM 現金股利
+    latest_date    = pf["date"].max()
+    mask           = (div_df["ex_date"] <= latest_date) & (div_df["ex_date"] > latest_date - pd.Timedelta(days=365))
+    latest_ttm_div = float(div_df[mask]["cash_dividend"].sum())
+
+    if latest_ttm_div <= 0:
+        return {}
+
+    cheap_price     = round(latest_ttm_div / cheap_yield,     2)
+    fair_price      = round(latest_ttm_div / fair_yield,      2)
+    expensive_price = round(latest_ttm_div / expensive_yield, 2)
+
+    return {
+        "yield_ttm_div":         round(latest_ttm_div, 2),
+        "yield_cheap_yield":     round(cheap_yield     * 100, 4),  # 儲存為百分比
+        "yield_fair_yield":      round(fair_yield      * 100, 4),
+        "yield_expensive_yield": round(expensive_yield * 100, 4),
+        "yield_cheap_price":     cheap_price,
+        "yield_fair_price":      fair_price,
+        "yield_expensive_price": expensive_price,
+        "yield_status":          get_status(current_price, cheap_price, fair_price),
+    }
+
+
 # ─────────────── 主流程 ───────────────
 
 def run(stock_ids: list[str] | None = None):
@@ -284,8 +352,8 @@ def run(stock_ids: list[str] | None = None):
     if stock_ids is None:
         stock_ids = list(shares_map.keys())
 
-    total                              = len(stock_ids)
-    success_pb = success_ps = success_pfcf = 0
+    total                                       = len(stock_ids)
+    success_pb = success_ps = success_pfcf = success_yield = 0
     print(f"開始計算替代估值，共 {total} 支股票")
 
     for idx, stock_id in enumerate(stock_ids, 1):
@@ -315,20 +383,26 @@ def run(stock_ids: list[str] | None = None):
                 updates.update(pfcf)
                 success_pfcf += 1
 
+            yld = calculate_yield(stock_id, price_df, current_price)
+            if yld:
+                updates.update(yld)
+                success_yield += 1
+
             if updates:
                 updates["stock_id"] = stock_id
                 supabase.table("valuations").upsert(updates).execute()
 
-            pb_s   = pb.get("pb_status",   "—") if pb   else "—"
-            ps_s   = ps.get("ps_status",   "—") if ps   else "—"
+            pb_s   = pb.get("pb_status",    "—") if pb   else "—"
+            ps_s   = ps.get("ps_status",    "—") if ps   else "—"
             pfcf_s = pfcf.get("pfcf_status","—") if pfcf else "—"
-            print(f"  [{idx}/{total}] {stock_id} → P/B:{pb_s}  P/S:{ps_s}  P/FCF:{pfcf_s}")
+            yld_s  = yld.get("yield_status","—") if yld  else "—"
+            print(f"  [{idx}/{total}] {stock_id} → P/B:{pb_s}  P/S:{ps_s}  P/FCF:{pfcf_s}  殖利率:{yld_s}")
 
         except Exception as e:
             print(f"  [{idx}/{total}] {stock_id} → 錯誤: {e}")
             traceback.print_exc()
 
-    print(f"\n完成：P/B {success_pb} 支 ／ P/S {success_ps} 支 ／ P/FCF {success_pfcf} 支")
+    print(f"\n完成：P/B {success_pb} 支 ／ P/S {success_ps} 支 ／ P/FCF {success_pfcf} 支 ／ 殖利率 {success_yield} 支")
 
 
 if __name__ == "__main__":

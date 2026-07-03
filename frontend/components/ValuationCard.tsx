@@ -47,12 +47,20 @@ interface Valuation {
   pfcf_fair_price?: number | null
   pfcf_expensive_price?: number | null
   pfcf_status?: string | null
+  yield_ttm_div?: number | null
+  yield_cheap_yield?: number | null
+  yield_fair_yield?: number | null
+  yield_expensive_yield?: number | null
+  yield_cheap_price?: number | null
+  yield_fair_price?: number | null
+  yield_expensive_price?: number | null
+  yield_status?: string | null
 }
 
-type Model = 'pe' | 'pb' | 'ps' | 'pfcf'
+type Model = 'pe' | 'pb' | 'ps' | 'pfcf' | 'yield'
 
 const MODEL_LABELS: Record<Model, string> = {
-  pe: 'P/E', pb: 'P/B', ps: 'P/S', pfcf: 'P/FCF',
+  pe: 'P/E', pb: 'P/B', ps: 'P/S', pfcf: 'P/FCF', yield: '殖利率',
 }
 
 // 品質門檻設定（新增指標時在此加一個陣列）
@@ -102,9 +110,10 @@ function toQuarterLabel(dateStr: string): string {
 
 function hasModel(v: Valuation, m: Model): boolean {
   if (m === 'pe') return true
-  if (m === 'pb') return !!(v.pb_status && v.pb_status !== '無法計算' && v.pb_cheap_price != null)
-  if (m === 'ps') return !!(v.ps_status && v.ps_status !== '無法計算' && v.ps_cheap_price != null)
-  return !!(v.pfcf_status && v.pfcf_status !== '無法計算' && v.pfcf_cheap_price != null)
+  if (m === 'pb')    return !!(v.pb_status    && v.pb_status    !== '無法計算' && v.pb_cheap_price    != null)
+  if (m === 'ps')    return !!(v.ps_status    && v.ps_status    !== '無法計算' && v.ps_cheap_price    != null)
+  if (m === 'pfcf')  return !!(v.pfcf_status  && v.pfcf_status  !== '無法計算' && v.pfcf_cheap_price  != null)
+  return !!(v.yield_status && v.yield_status !== '無法計算' && v.yield_cheap_price != null)
 }
 
 function getRecommendedModel(industry: string | null | undefined, v: Valuation): Model {
@@ -129,9 +138,10 @@ function getRecommendedModel(industry: string | null | undefined, v: Valuation):
 
 function getModelStatus(v: Valuation, m: Model): string {
   if (m === 'pe') return v.status
-  if (m === 'pb') return v.pb_status ?? '未知'
-  if (m === 'ps') return v.ps_status ?? '未知'
-  return v.pfcf_status ?? '未知'
+  if (m === 'pb')   return v.pb_status    ?? '未知'
+  if (m === 'ps')   return v.ps_status    ?? '未知'
+  if (m === 'pfcf') return v.pfcf_status  ?? '未知'
+  return v.yield_status ?? '未知'
 }
 
 export default function ValuationCard({
@@ -211,7 +221,7 @@ export default function ValuationCard({
 
       {/* 估值模型 Tab 列 */}
       <div className="flex gap-1 mb-5 bg-black/5 rounded-xl p-1">
-        {(['pe', 'pb', 'ps', 'pfcf'] as Model[]).map(m => {
+        {(['pe', 'pb', 'ps', 'pfcf', 'yield'] as Model[]).map(m => {
           const available = hasModel(v, m)
           const isRec = m === recommended
           return (
@@ -258,6 +268,11 @@ export default function ValuationCard({
           <PriceLevel label="合理價" price={v.pfcf_fair_price!}      ratio={v.pfcf_fair_pfcf!}      color="text-blue-600"  ratioLabel="P/FCF" />
           <PriceLevel label="昂貴價" price={v.pfcf_expensive_price!} ratio={v.pfcf_expensive_pfcf!} color="text-red-500"   ratioLabel="P/FCF" />
         </>}
+        {active === 'yield' && <>
+          <PriceLevel label="便宜價" price={v.yield_cheap_price!}     ratio={v.yield_cheap_yield!}     color="text-green-600" ratioLabel="殖利率≥" ratioSuffix="%" />
+          <PriceLevel label="合理價" price={v.yield_fair_price!}      ratio={v.yield_fair_yield!}      color="text-blue-600"  ratioLabel="殖利率" ratioSuffix="%" />
+          <PriceLevel label="昂貴價" price={v.yield_expensive_price!} ratio={v.yield_expensive_yield!} color="text-red-500"   ratioLabel="殖利率≤" ratioSuffix="%" />
+        </>}
       </div>
 
       {/* 模型基準值 + 更新時間 */}
@@ -292,6 +307,9 @@ export default function ValuationCard({
         )}
         {active === 'pfcf' && v.pfcf_per_share != null && (
           <span>TTM 每股 FCF <strong className="text-gray-800 ml-1">{v.pfcf_per_share.toFixed(1)} 元</strong></span>
+        )}
+        {active === 'yield' && v.yield_ttm_div != null && (
+          <span>TTM 現金股利 <strong className="text-gray-800 ml-1">{v.yield_ttm_div} 元</strong></span>
         )}
         <span className="basis-full text-xs text-gray-400 mt-1">更新：{updated}</span>
       </div>
@@ -347,15 +365,15 @@ export default function ValuationCard({
 }
 
 function PriceLevel({
-  label, price, ratio, color, ratioLabel,
+  label, price, ratio, color, ratioLabel, ratioSuffix = '',
 }: {
-  label: string; price: number; ratio: number; color: string; ratioLabel: string
+  label: string; price: number; ratio: number; color: string; ratioLabel: string; ratioSuffix?: string
 }) {
   return (
     <div className="bg-white/70 rounded-xl px-3 py-2 text-center">
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={`text-lg font-bold ${color}`}>{price ?? '—'}</p>
-      <p className="text-xs text-gray-400">{ratioLabel} {ratio}</p>
+      <p className="text-xs text-gray-400">{ratioLabel} {ratio}{ratioSuffix}</p>
     </div>
   )
 }
