@@ -65,19 +65,21 @@ def fetch_all_stock_ids() -> list[str]:
 
 
 def download_stock_bvps(stock_id: str) -> int:
-    """下載單支股票的每股淨值，回傳寫入筆數
+    """下載單支股票的每股淨值與負債比，回傳寫入筆數
 
-    FinMind 無直接 BookValuePerShare 欄位，改以季度資產負債表計算：
+    同一次 API 呼叫同時計算：
       BVPS = 10 × EquityAttributableToOwnersOfParent / CapitalStock
-    假設面額 NT$10（台股主流），極少數面額不同的公司誤差可接受。
+      負債比 = TotalLiabilities / TotalAssets × 100
     """
     raw = finmind_get("TaiwanStockBalanceSheet", stock_id, START_DATE)
     if not raw:
         return 0
 
-    # 依日期收集需要的兩個欄位值
-    equity_by_date: dict[str, float] = {}
+    # 依日期收集所需欄位
+    equity_by_date:  dict[str, float] = {}
     capital_by_date: dict[str, float] = {}
+    assets_by_date:  dict[str, float] = {}
+    liab_by_date:    dict[str, float] = {}
 
     for r in raw:
         date_str = r.get("date", "").strip()
@@ -93,6 +95,10 @@ def download_stock_bvps(stock_id: str) -> int:
             equity_by_date[date_str] = val
         elif type_str == "CapitalStock":
             capital_by_date[date_str] = val
+        elif type_str == "TotalAssets":
+            assets_by_date[date_str] = val
+        elif type_str == "Liabilities":          # FinMind 欄位名稱（非 TotalLiabilities）
+            liab_by_date[date_str] = val
 
     rows = []
     for date_str, equity in equity_by_date.items():
@@ -102,10 +108,19 @@ def download_stock_bvps(stock_id: str) -> int:
         bvps = 10.0 * equity / capital
         if bvps <= 0:
             continue
+
+        # 計算負債比（同季有資料才填，否則留 None）
+        total_assets = assets_by_date.get(date_str)
+        total_liab   = liab_by_date.get(date_str)
+        debt_ratio = None
+        if total_assets and total_assets > 0 and total_liab is not None:
+            debt_ratio = round(total_liab / total_assets * 100, 2)
+
         rows.append({
             "stock_id":             stock_id,
             "quarter_end_date":     date_str,
             "book_value_per_share": round(bvps, 4),
+            "debt_ratio":           debt_ratio,
         })
 
     if not rows:

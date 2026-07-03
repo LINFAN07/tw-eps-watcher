@@ -30,6 +30,7 @@ interface Valuation {
   pb_expensive_price?: number | null
   pb_status?: string | null
   operating_margin?: number | null
+  debt_ratio?: number | null
   ps_revenue_per_share?: number | null
   ps_cheap_ps?: number | null
   ps_fair_ps?: number | null
@@ -67,6 +68,26 @@ const MARGIN_TIERS = [
   { min: 0,                     valueColor: 'text-red-500',   label: '偏低', labelColor: 'text-red-400'   },
   { min: Number.NEGATIVE_INFINITY, valueColor: 'text-red-600', label: '虧損', labelColor: 'text-red-600' },
 ]
+
+// 負債比：降序 min 方向，與 ROE_TIERS/MARGIN_TIERS 一致（find 回傳第一個 ratio >= min 的項）
+// 金融業（銀行/保險/證券）天生高槓桿，閾值另計
+const DEBT_TIERS_FINANCE = [
+  { min: 94,                       valueColor: 'text-red-500',   label: '警示', labelColor: 'text-red-400'   },
+  { min: 89,                       valueColor: 'text-amber-500', label: '偏高', labelColor: 'text-amber-400' },
+  { min: Number.NEGATIVE_INFINITY, valueColor: 'text-green-600', label: '正常', labelColor: 'text-green-500' },
+]
+const DEBT_TIERS_GENERAL = [
+  { min: 61,                       valueColor: 'text-red-500',   label: '偏高', labelColor: 'text-red-400'   },
+  { min: 41,                       valueColor: 'text-amber-500', label: '中等', labelColor: 'text-amber-400' },
+  { min: Number.NEGATIVE_INFINITY, valueColor: 'text-green-600', label: '健康', labelColor: 'text-green-500' },
+]
+
+const FINANCE_INDUSTRIES = /銀行|保險|證券|金融/
+
+function getDebtTier(ratio: number, industry?: string | null) {
+  const tiers = FINANCE_INDUSTRIES.test(industry ?? '') ? DEBT_TIERS_FINANCE : DEBT_TIERS_GENERAL
+  return tiers.find(t => ratio >= t.min)!
+}
 
 const statusStyle: Record<string, { bg: string; text: string; label: string }> = {
   '便宜': { bg: 'bg-green-50 border-green-200', text: 'text-green-700 bg-green-100', label: '低估' },
@@ -147,6 +168,10 @@ export default function ValuationCard({
 
   const marginTier = (v.operating_margin != null)
     ? MARGIN_TIERS.find(t => v.operating_margin! >= t.min) ?? null
+    : null
+
+  const debtTier = (v.debt_ratio != null)
+    ? getDebtTier(v.debt_ratio, industry)
     : null
 
   const prevTTM = prevYearQuarters.length === 4
@@ -272,7 +297,7 @@ export default function ValuationCard({
       </div>
 
       {/* 品質指標列（固定顯示，不隨 Tab 切換）*/}
-      {(roeTier != null || marginTier != null) && (
+      {(roeTier != null || marginTier != null || debtTier != null) && (
         <div className="mt-3 pt-3 border-t border-current/10 flex items-center gap-3 text-sm text-gray-600 flex-wrap">
           <span className="text-xs text-gray-400">品質</span>
           {roeTier != null && (
@@ -288,6 +313,14 @@ export default function ValuationCard({
               <span>營業利益率</span>
               <strong className={marginTier.valueColor}>{v.operating_margin!.toFixed(1)}%</strong>
               <span className={`text-xs ${marginTier.labelColor}`}>{marginTier.label}</span>
+            </span>
+          )}
+          {(roeTier != null || marginTier != null) && debtTier != null && <span className="text-gray-300">·</span>}
+          {debtTier != null && (
+            <span className="flex items-center gap-1">
+              <span>負債比</span>
+              <strong className={debtTier.valueColor}>{v.debt_ratio!.toFixed(1)}%</strong>
+              <span className={`text-xs ${debtTier.labelColor}`}>{debtTier.label}</span>
             </span>
           )}
         </div>

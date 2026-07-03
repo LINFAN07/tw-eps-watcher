@@ -135,4 +135,9 @@ ALTER TABLE valuations
 
 -- 品質指標擴充
 ALTER TABLE valuations
-  ADD COLUMN IF NOT EXISTS operating_margin DECIMAL(6, 2);  -- TTM 營業利益率（%）
+  ADD COLUMN IF NOT EXISTS operating_margin DECIMAL(6, 2),  -- TTM 營業利益率（%）
+  ADD COLUMN IF NOT EXISTS debt_ratio       DECIMAL(6, 2);  -- 最新負債比（TotalLiabilities / TotalAssets × 100）
+
+-- balance_sheet_quarterly 新增負債比欄位（每季追蹤）
+ALTER TABLE balance_sheet_quarterly
+  ADD COLUMN IF NOT EXISTS debt_ratio DECIMAL(6, 2);  -- 當季負債比（%）
