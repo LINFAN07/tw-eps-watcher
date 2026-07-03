@@ -155,6 +155,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 const isPotential = !isLoss
                   && r.operating_margin != null && r.operating_margin >= 10
                   && r.roe != null && r.roe >= 0 && r.roe < 15
+                const isKY = r.stocks?.name?.includes('-KY') ?? false
                 return (
                   <tr key={r.stock_id} className={`border-b transition-colors ${isLoss ? 'bg-red-50 hover:bg-red-100 border-red-100' : 'border-gray-50 hover:bg-gray-50'}`}>
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
@@ -167,6 +168,11 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                       <Link href={`/stock/${r.stock_id}`} className="text-gray-800 hover:text-blue-600">
                         {r.stocks?.name ?? '—'}
                       </Link>
+                      {isKY && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200 font-medium">
+                          ⚠️ KY
+                        </span>
+                      )}
                       {/* 多模型共識徽章 */}
                       {r.models && (
                         <div className="flex gap-1 mt-0.5 flex-wrap">
@@ -184,6 +190,11 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                         >
                           🔍 潛力黑馬
                         </span>
+                      )}
+                      {isKY && isPotential && (
+                        <div className="text-[10px] text-orange-600 mt-0.5">
+                          KY 股帳上現金難以驗證，請留意海外資產真實性
+                        </div>
                       )}
                       {isLoss && (
                         <div className="text-[10px] text-red-500 mt-0.5">⚠️ 目前虧損，歷史估值帶可能失真</div>
