@@ -152,6 +152,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
               {filtered.map((r, i) => {
                 const discount = (((r.cheap_price - r.current_price) / r.cheap_price) * 100).toFixed(1)
                 const isLoss = (r.roe != null && r.roe < 0) || (r.operating_margin != null && r.operating_margin < 0)
+                const isPotential = !isLoss
+                  && r.operating_margin != null && r.operating_margin >= 10
+                  && r.roe != null && r.roe >= 0 && r.roe < 15
                 return (
                   <tr key={r.stock_id} className={`border-b transition-colors ${isLoss ? 'bg-red-50 hover:bg-red-100 border-red-100' : 'border-gray-50 hover:bg-gray-50'}`}>
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
@@ -173,6 +176,14 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                             </span>
                           ))}
                         </div>
+                      )}
+                      {isPotential && (
+                        <span
+                          title="本業獲利強勁，但資金效率尚未完全釋放（帳上現金充沛或處於擴產期）。一旦提高配息或產能放量，ROE 有望爆發。屬進階型潛在價值股，需留意等待時間成本。"
+                          className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200 font-medium leading-tight mt-0.5 cursor-help"
+                        >
+                          🔍 潛力黑馬
+                        </span>
                       )}
                       {isLoss && (
                         <div className="text-[10px] text-red-500 mt-0.5">⚠️ 目前虧損，歷史估值帶可能失真</div>
