@@ -26,12 +26,15 @@ export interface LeaderboardData {
 type Model = 'pe' | 'pb' | 'ps' | 'pfcf' | 'consensus'
 
 const MODEL_META: Record<Model, { label: string; desc: string }> = {
+  consensus: { label: '多模型', desc: '共識精選' },
   pe:        { label: 'P/E',   desc: '獲利估值' },
   pb:        { label: 'P/B',   desc: '資產估值' },
   ps:        { label: 'P/S',   desc: '營收估值' },
   pfcf:      { label: 'P/FCF', desc: '現金流估值' },
-  consensus: { label: '多模型', desc: '共識精選' },
 }
+
+// 金融相關產業（無營業利益率，豁免利益率篩選）
+const FINANCIAL_KEYWORDS = ['金融', '保險', '銀行', '證券']
 
 // 從 TTM EPS 和每股淨值推算 ROE
 function calcRoe(row: LeaderboardRow): number | null {
@@ -51,7 +54,7 @@ const ROE_TIERS    = [{ min: 15, cls: 'text-green-600' }, { min: 8, cls: 'text-a
 const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-amber-500' }, ...LOSS_TIERS]
 
 export default function CheapLeaderboardClient({ data }: { data: LeaderboardData }) {
-  const [model, setModel]               = useState<Model>('pe')
+  const [model, setModel]               = useState<Model>('consensus')
   const [industry, setIndustry]         = useState<string>('全部')
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
   const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
@@ -72,7 +75,13 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
   const filtered = rowsWithRoe
     .filter(r => industry === '全部' || (r.stocks?.industry || '其他') === industry)
     .filter(r => !filterRoe    || (r.roe ?? 0) >= 15)
-    .filter(r => !filterMargin || r.operating_margin == null || r.operating_margin >= 10)
+    .filter(r => {
+      if (!filterMargin) return true
+      if (r.operating_margin != null) return r.operating_margin >= 10
+      // null 利益率：僅金融/保險/銀行/證券類股豁免，其他產業視為不符合
+      const industry = r.stocks?.industry ?? ''
+      return FINANCIAL_KEYWORDS.some(kw => industry.includes(kw))
+    })
 
   return (
     <>
