@@ -64,7 +64,7 @@
 ### 公司品質指標
 
 - [x] **ROE（股東報酬率）**：TTM EPS ÷ 每股淨值，直接在 ValuationCard 底部顯示（≥15% 綠色優質、8–15% 橘色普通、<8% 紅色偏低）
-- [ ] **負債比**：需從 FinMind `TaiwanStockBalanceSheet` 額外下載 `TotalAssets` + `TotalLiabilities`（約 4.5 小時），計算後顯示於品質指標列
+- [x] **負債比**：從 FinMind `TaiwanStockBalanceSheet` 下載 `TotalAssets` + `Liabilities`，計算後顯示於品質指標列（金融業閾值不同）
 - [x] **營業利益率**：`income_statement_quarterly.operating_income` ÷ TTM 月營收，1471 支股票已計算完成，寫入 `valuations.operating_margin`
 
 ### 估值模型改善
