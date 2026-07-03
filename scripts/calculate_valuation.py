@@ -3,7 +3,7 @@
 讀取 Supabase 的 EPS 與股價，計算 P/E 河流圖估值，寫入 valuations 資料表。
 
 P/E 河流圖邏輯：
-  TTM EPS = 最近 4 季 EPS 合計
+  TTM EPS = 最近 4 季 EPS 合計（興櫃半年報改用 2 期）
   歷史 P/E 序列 = 每個交易日的 (收盤價 ÷ 當時 TTM EPS)
   便宜價 = TTM EPS × 歷史 P/E 第 20 百分位數
   合理價 = TTM EPS × 歷史 P/E 第 50 百分位數
@@ -68,10 +68,17 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     return df.sort_values("date")
 
 
+def _eps_window(eps_df: pd.DataFrame) -> int:
+    """興櫃半年報只有 6/30 與 12/31，用 2 期；上市/上櫃季報用 4 期"""
+    months = set(eps_df["quarter_end_date"].dt.month.unique())
+    return 2 if months.issubset({6, 12}) else 4
+
+
 def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFrame:
     """用 merge_asof 向量化計算每個交易日的 P/E，取代逐行迴圈"""
+    w = _eps_window(eps_df)
     eps = eps_df.copy()
-    eps["ttm_eps"] = eps["eps"].rolling(4, min_periods=4).sum()
+    eps["ttm_eps"] = eps["eps"].rolling(w, min_periods=w).sum()
     eps = eps.dropna(subset=["ttm_eps"])
 
     merged = pd.merge_asof(
@@ -86,22 +93,24 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFram
 
 
 def compute_normalized_eps(eps_df: pd.DataFrame) -> float | None:
-    """取近 20 季（5 年）EPS 算術平均作為常態化基準；不足 8 季回傳 None"""
-    recent = eps_df.tail(20)["eps"].astype(float)
-    if len(recent) < 8:
+    """取近 5 年 EPS 算術平均作為常態化基準；不足 2 年資料回傳 None"""
+    w = _eps_window(eps_df)
+    recent = eps_df.tail(w * 5)["eps"].astype(float)
+    if len(recent) < w * 2:
         return None
     return float(recent.mean())
 
 
 def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
     """
-    偵測最近 4 季是否有疑似一次性收益（正向離群季度）。
+    偵測最近一個 TTM 週期（季報 4 期 / 半年報 2 期）是否有疑似一次性收益。
     使用 IQR 方法：上界 = Q75 + 2.5 × IQR（最小 IQR 為 0.5 避免零除）。
     若偵測到，將離群季度 cap 至上界後重算 TTM；否則回傳原始 TTM。
     回傳 (normalized_ttm, warning_text or None)
     """
+    w        = _eps_window(eps_df)
     all_eps  = eps_df["eps"].astype(float)
-    recent_4 = eps_df.tail(4)["eps"].astype(float)
+    recent_4 = eps_df.tail(w)["eps"].astype(float)
 
     q25, q75 = float(np.percentile(all_eps, 25)), float(np.percentile(all_eps, 75))
     iqr = max(q75 - q25, 0.5)
@@ -112,7 +121,7 @@ def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
         return float(recent_4.sum()), None
 
     # 找出離群季度，組成警告文字
-    outlier_rows = eps_df.tail(4)[outlier_mask.values]
+    outlier_rows = eps_df.tail(w)[outlier_mask.values]
     parts = [
         f"{row['quarter_end_date'].strftime('%Y-%m-%d')} EPS {row['eps']:.2f} 元"
         for _, row in outlier_rows.iterrows()
