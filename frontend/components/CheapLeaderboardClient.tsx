@@ -83,6 +83,15 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
       return FINANCIAL_KEYWORDS.some(kw => industry.includes(kw))
     })
 
+  // 共識 Tab：頂級優質（ROE≥15% 且利益率≥10%）置頂，其餘保持原排序
+  const displayRows = model === 'consensus'
+    ? [...filtered].sort((a, b) => {
+        const score = (r: typeof a) =>
+          (r.roe != null && r.roe >= 15 && r.operating_margin != null && r.operating_margin >= 10) ? 1 : 0
+        return score(b) - score(a)
+      })
+    : filtered
+
   return (
     <>
       {/* 估值模型 Tab */}
@@ -149,12 +158,14 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
+              {displayRows.map((r, i) => {
                 const discount = (((r.cheap_price - r.current_price) / r.cheap_price) * 100).toFixed(1)
                 const isLoss = (r.roe != null && r.roe < 0) || (r.operating_margin != null && r.operating_margin < 0)
-                const isPotential = !isLoss
+                const isTopQuality = r.roe != null && r.roe >= 15
                   && r.operating_margin != null && r.operating_margin >= 10
-                  && r.roe != null && r.roe >= 0 && r.roe < 15
+                const isPotential = !isLoss && !isTopQuality
+                  && r.operating_margin != null && r.operating_margin >= 10
+                  && r.roe != null && r.roe >= 0
                 const isKY = r.stocks?.name?.includes('-KY') ?? false
                 return (
                   <tr key={r.stock_id} className={`border-b transition-colors ${isLoss ? 'bg-red-50 hover:bg-red-100 border-red-100' : 'border-gray-50 hover:bg-gray-50'}`}>
@@ -182,6 +193,11 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                             </span>
                           ))}
                         </div>
+                      )}
+                      {isTopQuality && (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 font-medium leading-tight mt-0.5">
+                          ⭐ 頂級優質
+                        </span>
                       )}
                       {isPotential && (
                         <span
