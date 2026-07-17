@@ -25,9 +25,15 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-TWSE_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+# 上市：使用官網 rwd 端點，而非 openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL。
+# 後者是 T-1 的批次檔（實測當日晚間 9 點仍回傳前一交易日資料），
+# 會讓排程把前一日收盤價寫成當日價格。官網端點則有當日資料。
+TWSE_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
 TPEX_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
 ESB_URL  = "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics"
+
+# 官網 rwd 端點會擋掉沒有 User-Agent 的請求
+UA = {"User-Agent": "Mozilla/5.0"}
 
 
 def clean_price(s) -> float | None:
@@ -39,42 +45,94 @@ def clean_price(s) -> float | None:
         return None
 
 
-def fetch_twse_prices() -> dict[str, float]:
+def roc_to_iso(raw) -> str | None:
+    """民國日期（1150717）轉西元（2026-07-17）"""
+    text = str(raw).strip()
+    if len(text) != 7 or not text.isdigit():
+        return None
+    return f"{int(text[:3]) + 1911:04d}-{text[3:5]}-{text[5:7]}"
+
+
+def fetch_twse_prices() -> tuple[str | None, dict[str, float]]:
+    """
+    上市收盤價。回傳 (資料日期, {股票代碼: 收盤價})。
+
+    日期一律取自 API 回應，不用系統當日：交易所的資料日期未必等於今天
+    （休市、來源延遲皆會造成落差），用系統日期蓋章會把舊價寫成今日價。
+    """
+    today = date.today().strftime("%Y%m%d")
     try:
-        data = requests.get(TWSE_URL, timeout=30).json()
-        return {str(r.get("Code", "")).strip(): p
-                for r in data if (p := clean_price(r.get("ClosingPrice")))}
+        resp = requests.get(TWSE_URL, params={"date": today, "type": "ALL", "response": "json"},
+                            headers=UA, timeout=30).json()
     except Exception as e:
         print(f"  TWSE 取得失敗: {e}")
-        return {}
+        return None, {}
+
+    if resp.get("stat") != "OK":
+        # 休市時為「很抱歉，沒有符合條件的資料!」，端點自身即可判斷交易日
+        print(f"  TWSE 無資料：{resp.get('stat')}")
+        return None, {}
+
+    table = next((t for t in resp.get("tables", []) if "每日收盤行情" in str(t.get("title", ""))), None)
+    if not table:
+        print("  TWSE 回應中找不到每日收盤行情表")
+        return None, {}
+
+    fields = table.get("fields", [])
+    try:
+        i_code, i_close = fields.index("證券代號"), fields.index("收盤價")
+    except ValueError:
+        print(f"  TWSE 欄位不如預期: {fields}")
+        return None, {}
+
+    date_str = resp.get("date", "")
+    iso = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}" if len(date_str) == 8 else None
+
+    prices = {}
+    for row in table.get("data", []):
+        code = str(row[i_code]).strip()
+        price = clean_price(row[i_close])
+        if code and price:
+            prices[code] = price
+    return iso, prices
 
 
-def fetch_tpex_prices() -> dict[str, float]:
+def fetch_tpex_prices() -> tuple[str | None, dict[str, float]]:
+    """上櫃收盤價。回傳 (資料日期, {股票代碼: 收盤價})"""
     try:
         data = requests.get(TPEX_URL, timeout=30).json()
-        return {str(r.get("SecuritiesCompanyCode", "")).strip(): p
-                for r in data if (p := clean_price(r.get("Close")))}
     except Exception as e:
         print(f"  TPEx 上櫃取得失敗: {e}")
-        return {}
+        return None, {}
+
+    iso = roc_to_iso(data[0].get("Date")) if data else None
+    prices = {str(r.get("SecuritiesCompanyCode", "")).strip(): p
+              for r in data if (p := clean_price(r.get("Close")))}
+    return iso, prices
 
 
-def fetch_esb_prices() -> dict[str, float]:
-    """興櫃（第三市場）最新成交價，以 LatestPrice 為主、Average 為備"""
+def fetch_esb_prices() -> tuple[str | None, dict[str, float]]:
+    """
+    興櫃（第三市場）最新成交價。回傳 (資料日期, {股票代碼: 最新成交價})。
+
+    只採用 LatestPrice，不以 Average（加權均價）頂替：
+    兩者是不同的指標，混著存進 close_price 會讓同一支股票的歷史序列基準不一致。
+    當日無成交者（LatestPrice 為 0）直接不給價格，而非填補——沒有成交就是沒有價格。
+    """
     try:
         data = requests.get(ESB_URL, timeout=30).json()
-        result = {}
-        for r in data:
-            code = str(r.get("SecuritiesCompanyCode", "")).strip()
-            if not code:
-                continue
-            price = clean_price(r.get("LatestPrice")) or clean_price(r.get("Average"))
-            if price:
-                result[code] = price
-        return result
     except Exception as e:
         print(f"  TPEx 興櫃取得失敗: {e}")
-        return {}
+        return None, {}
+
+    iso = roc_to_iso(data[0].get("Date")) if data else None
+    prices = {}
+    for r in data:
+        code = str(r.get("SecuritiesCompanyCode", "")).strip()
+        price = clean_price(r.get("LatestPrice"))
+        if code and price:
+            prices[code] = price
+    return iso, prices
 
 
 def upsert_batch(table, rows, batch_size=500):
@@ -153,26 +211,23 @@ def update_valuations(prices: dict[str, float]):
 
 
 def run():
-    today = date.today().strftime("%Y-%m-%d")
-    print(f"=== 每日股價更新：{today} ===\n")
+    print(f"=== 每日股價更新：{date.today()} ===\n")
 
-    # 1. 取得當日收盤價
+    # 1. 取得各市場收盤價（各自帶有來源標記的資料日期）
     print("取得上市股票收盤價（TWSE）...")
-    twse = fetch_twse_prices()
-    print(f"  {len(twse)} 支")
+    twse_date, twse = fetch_twse_prices()
+    print(f"  {len(twse)} 支，資料日期 {twse_date or '無'}")
 
     print("取得上櫃股票收盤價（TPEx 上櫃）...")
-    tpex = fetch_tpex_prices()
-    print(f"  {len(tpex)} 支")
+    tpex_date, tpex = fetch_tpex_prices()
+    print(f"  {len(tpex)} 支，資料日期 {tpex_date or '無'}")
 
     print("取得興櫃股票收盤價（TPEx 興櫃）...")
-    esb = fetch_esb_prices()
-    print(f"  {len(esb)} 支")
+    esb_date, esb = fetch_esb_prices()
+    print(f"  {len(esb)} 支，資料日期 {esb_date or '無'}")
 
-    # 三市場合併，優先順序：TWSE > TPEx 上櫃 > 興櫃
-    all_prices = {**esb, **tpex, **twse}
-
-    if not all_prices:
+    sources = [(twse_date, twse), (tpex_date, tpex), (esb_date, esb)]
+    if not any(d and p for d, p in sources):
         print("\n今日無交易資料（休市），結束。")
         return
 
@@ -185,18 +240,31 @@ def run():
             break
         offset += 1000
 
-    price_rows = [{"stock_id": sid, "date": today, "close_price": p}
-                  for sid, p in all_prices.items() if sid in known]
-    print(f"\n符合資料庫的股票：{len(price_rows)} 支")
+    # 3. 寫入 daily_prices，每個市場用自己的資料日期
+    #    （各交易所的發布時程不同，硬套系統日期會讓價格落在錯誤的交易日）
+    price_rows = []
+    for src_date, prices in sources:
+        if not src_date or not prices:
+            continue
+        price_rows += [{"stock_id": sid, "date": src_date, "close_price": p}
+                       for sid, p in prices.items() if sid in known]
 
-    # 3. 寫入 daily_prices
+    print(f"\n符合資料庫的股票：{len(price_rows)} 筆")
     upsert_batch("daily_prices", price_rows)
     print("收盤價寫入完成")
 
+    # 供估值使用的現價：同一支股票若多個來源都有，取資料日期較新者
+    all_prices: dict[str, tuple[str, float]] = {}
+    for src_date, prices in sources:
+        if not src_date:
+            continue
+        for sid, p in prices.items():
+            if sid in known and (sid not in all_prices or src_date > all_prices[sid][0]):
+                all_prices[sid] = (src_date, p)
+
     # 4. 快速更新估值現價與狀態
     print("\n更新估值...")
-    known_prices = {r["stock_id"]: r["close_price"] for r in price_rows}
-    update_valuations(known_prices)
+    update_valuations({sid: p for sid, (_, p) in all_prices.items()})
 
     print("\n完成！")
 

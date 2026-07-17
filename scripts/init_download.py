@@ -88,8 +88,11 @@ def _extract_eps(sid, raw):
             for r in raw if r.get("type") in EPS_TYPES and r.get("value") is not None]
 
 def _extract_price(sid, raw):
+    # FinMind 對「當日無成交」回傳 close = 0，那不是價格而是缺值。
+    # 若照寫進資料庫，河流圖的月採樣會採到 0，畫出股價暴跌至零的假訊號
+    # （實測 3629 有 31/122 個月採樣點為 0）。沒有成交就不該有記錄。
     return [{"stock_id": sid, "date": r["date"], "close_price": float(r["close"])}
-            for r in raw if r.get("close") is not None]
+            for r in raw if r.get("close") is not None and float(r["close"]) > 0]
 
 def _download_step(label, dataset, table, progress_key, stock_ids, progress, extract_fn):
     done      = set(progress[progress_key])
