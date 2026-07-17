@@ -86,11 +86,29 @@
 - [x] 定期驗證估值計算結果是否合理（抽樣比對）
   - **實作**：`scripts/validate_valuations.py` 每週隨機抽樣 100 支股票，驗證價格順序（cheap < fair < expensive）、status 與現價一致性、倍數合理範圍，發現嚴重問題寄送 Email；搭配 `.github/workflows/weekly_validate.yml` 每週一 09:00 自動執行
 
-### 已知問題（2026-07-17 全專案 review 發現，尚未處理）
+### 待辦（2026-07-17 全專案 review 後）
 
-- [ ] **P/FCF 可能採用過期的現金流**：`calculate_alt_valuations.py` 的 `latest_fcf_ps` 在迴圈中被 `continue` 跳過負值，存的是「最後一個為正的季度」而非最新季度。若公司近期 FCF 轉負，網站會用舊 FCF 算目標價且無任何提示，與「FCF 為負時不顯示目標價」的設計不符。需先確認受影響股票數。
-- [ ] **估值失效時舊資料不會被清除**：`calculate_valuation()` 回傳 `None` 時（如 7731 這類興櫃半年報且長期虧損的公司），`run()` 直接跳過，資料庫殘留的舊目標價永遠不會被清掉。已手動修正 7731，但邏輯缺口仍在。
-- [ ] **`valuations.updated_at` 不反映真實更新時間**：`daily_price_update.py` 只寫 `current_price` 與各模型 status，不動 `updated_at`，導致前端顯示的「最後更新」停留在上次全量計算的日期，會讓使用者誤以為資料很舊。
+- [ ] **⚠️ 需在 Supabase 手動執行 SQL**：`schema.sql` 末段的 `ALTER TABLE valuations`
+  （將 `ps_*` / `pfcf_*` 倍數欄位由 `DECIMAL(6,4)` 放寬為 `DECIMAL(8,4)`）。
+  程式允許倍數到 200，但欄位上限為 99.9999，倍數落在 100~200 時整筆 upsert 失敗，
+  該股票四個模型全部寫不進去。**執行前有 39 支股票持續寫入失敗**，
+  執行後需重跑 `python scripts/calculate_alt_valuations.py` 補上。
+- [ ] **興櫃股票缺淨值**：交易所 OpenAPI 的興櫃資產負債表僅涵蓋 35 家（共約 354 家），
+  FinMind 亦不完整，多數興櫃股無 P/B。
+- [ ] **金控淨值與官方公告有落差**：官方「每股參考淨值」以總股本（含特別股）計算，
+  FinMind 僅有普通股股本，國泰金因此為 55.27 而非官方的 50.04（約差 10%）。
+  目前選擇全序列統一採 FinMind 基準以確保百分位帶正確，代價是與其他網站顯示的數字不同。
+
+### 已完成（2026-07-17）
+
+- [x] **現金流「年度累計」被當成單季加總**：影響全部 1213 支 P/FCF 估值，
+  台積電每股 FCF 由 95.61 虛增修正為 40.72。已新增 `decumulate()`，前後端同步修正。
+- [x] **P/FCF 採用過期現金流**：基準值改取最新一季，不再沿用迴圈殘留值。
+- [x] **估值失效時舊資料殘留**：`calculate_valuation` 與 `calculate_alt_valuations`
+  皆改為在模型不適用時寫回 null。
+- [x] **`updated_at` 不反映真實更新時間**：改為在每日更新時明確帶入。
+- [x] **金融股 P/B**：改用「總權益 − 非控制權益」與 `OrdinaryShare`，61 支中可用者由 10 支增為 49 支。
+- [x] **市場溫度計與排行榜漏資料**：補上分頁與 `order()`。
 
 ---
 
