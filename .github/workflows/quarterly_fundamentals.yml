@@ -1,0 +1,108 @@
+name: 財報季基本面更新
+
+on:
+  schedule:
+    # 財報季各執行 2 次：申報截止日前一週、截止日後數日（確保收齊補件）
+    # Q1（截止 5/15）
+    - cron: '0 8 8,18 5 *'
+    # Q2（截止 8/14）
+    - cron: '0 8 7,17 8 *'
+    # Q3（截止 11/14）
+    - cron: '0 8 7,17 11 *'
+    # Q4／年報（截止 3/31）
+    - cron: '0 8 24 3 *'
+    - cron: '0 8 3 4 *'
+  workflow_dispatch:
+
+jobs:
+  # 每股淨值與負債比：TWSE/TPEx OpenAPI 整批端點，數分鐘完成
+  balance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv
+
+      - name: 更新每股淨值與負債比
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/update_fundamentals.py --balance
+
+  # 現金流量表：無整批 OpenAPI 端點，只能逐股呼叫 FinMind（約 4.2 小時）
+  # 因此一季只跑 2 次，不像淨值那樣可以頻繁更新
+  cash_flows:
+    needs: balance
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv
+
+      - name: 下載現金流量表（FinMind）
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/download_cash_flows.py
+
+  # 基準值更新後必須重算，否則網站仍顯示舊估值
+  recalculate:
+    needs: cash_flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv pandas numpy
+
+      - name: 重算替代估值（P/B / P/S / P/FCF / 殖利率）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/calculate_alt_valuations.py
+
+      - name: 排程失敗 Email 通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 財報季基本面更新失敗"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            財報季基本面更新排程執行失敗，請至以下連結查看錯誤日誌：
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

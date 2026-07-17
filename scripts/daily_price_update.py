@@ -15,7 +15,7 @@
 import os
 import sys
 import requests
-from datetime import date
+from datetime import date, datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -131,6 +131,10 @@ def update_valuations(prices: dict[str, float]):
                 .in_("stock_id", batch).execute())
         existing.extend(resp.data)
 
+    # updated_at 欄位的 DEFAULT NOW() 只在 INSERT 時生效，UPDATE 不會自動變動，
+    # 需明確帶入，否則前端顯示的「最後更新」會永遠停在建置日期。
+    now = datetime.now(timezone.utc).isoformat()
+
     updates = []
     for row in existing:
         sid   = row["stock_id"]
@@ -139,7 +143,7 @@ def update_valuations(prices: dict[str, float]):
             continue
 
         # 現價一律更新（含虧損股），各模型狀態依其目標價各自判定
-        update = {"stock_id": sid, "current_price": round(price, 2)}
+        update = {"stock_id": sid, "current_price": round(price, 2), "updated_at": now}
         for cheap_col, fair_col, status_col in STATUS_MODELS:
             update[status_col] = judge_status(price, row.get(cheap_col), row.get(fair_col))
         updates.append(update)

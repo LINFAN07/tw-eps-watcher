@@ -7,12 +7,17 @@
   Q3（9月底）：11月14日前
   Q4 / 年報 ：隔年3月31日前
 
-執行時機：財報季期間每天跑一次（由 GitHub Actions 排程）。
+執行時機：財報季期間每週跑一次（由 GitHub Actions 排程）。
 邏輯：
-  1. 從 FinMind 取得最新 EPS
-  2. 若有新季度資料（比資料庫中最新日期更新），寫入 eps_quarterly
-  3. 對有更新的股票呼叫 calculate_valuation，重算歷史 P/E 區間與估值
-  4. 印出有哪些股票更新了（供 GitHub Actions log 追蹤）
+  1. 判斷本季財報季正在申報的季別（target_quarter）
+  2. 跳過「資料庫已有該季 EPS」的股票——不呼叫 FinMind，直接略過
+  3. 對其餘股票從 FinMind 取得最新 EPS，有新季度就寫入 eps_quarterly
+  4. 對有更新的股票呼叫 calculate_valuation，重算歷史 P/E 區間與估值
+
+關於步驟 2：FinMind 免費版每次呼叫需間隔 6.5 秒，全市場 2,300+ 支跑完約 4.2 小時。
+若每次都全部重抓，財報季每週一次仍會快速消耗 GitHub Actions 額度
+（私有 repo 免費額度為 2,000 分鐘／月）。
+跳過已取得的股票後，越接近季末已申報者越多，執行時間逐次遞減。
 """
 
 import os
@@ -89,16 +94,42 @@ def get_latest_eps_dates() -> dict[str, str]:
     return latest
 
 
+def target_quarter(today: date) -> str | None:
+    """
+    目前財報季正在申報的季別（季末日）。
+    依申報期限回推：Q1→5/15、Q2→8/14、Q3→11/14、Q4/年報→隔年3/31。
+    非財報季回傳 None（此時全部股票都要查，因為無從判斷該跳過誰）。
+    """
+    m, y = today.month, today.year
+    if m in (1, 2, 3):    return f"{y - 1}-12-31"   # 年報申報期
+    if m in (4, 5):       return f"{y}-03-31"       # Q1
+    if m in (7, 8):       return f"{y}-06-30"       # Q2
+    if m in (10, 11):     return f"{y}-09-30"       # Q3
+    return None
+
+
 def run():
     today      = date.today()
     start_date = (today - timedelta(days=180)).strftime("%Y-%m-%d")  # 查近 6 個月
     print(f"=== 季度 EPS 更新：{today} ===")
-    print(f"查詢起始日：{start_date}\n")
+    print(f"查詢起始日：{start_date}")
 
-    stock_ids   = get_all_stock_ids()
+    all_ids      = get_all_stock_ids()
     latest_dates = get_latest_eps_dates()
-    total        = len(stock_ids)
-    updated_ids  = []
+
+    # 已有本季 EPS 的股票不必再問 FinMind，直接跳過（省下 6.5 秒／支）
+    target = target_quarter(today)
+    if target:
+        stock_ids = [s for s in all_ids if latest_dates.get(s, "1900-01-01") < target]
+        print(f"本季申報季別：{target}")
+        print(f"已有該季資料而跳過：{len(all_ids) - len(stock_ids)} 支")
+    else:
+        stock_ids = all_ids
+        print("非財報季，全部股票皆需查詢")
+
+    total       = len(stock_ids)
+    updated_ids = []
+    print(f"需查詢：{total} 支（預估 {total * CALL_INTERVAL / 60:.0f} 分鐘）\n")
 
     for idx, sid in enumerate(stock_ids, 1):
         raw = finmind_get("TaiwanStockFinancialStatements", sid, start_date)

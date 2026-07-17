@@ -25,7 +25,7 @@ tw-eps-watcher/
 | `valuations` | 預算估值結果（P/E + P/B + P/S + P/FCF） | `stock_id` |
 | `dividends` | 現金股利（殖利率圖用） | `(stock_id, ex_date)` |
 | `balance_sheet_quarterly` | 每股淨值（P/B 用） | `(stock_id, quarter_end_date)` |
-| `monthly_revenue` | 月營收千元（P/S 用） | `(stock_id, year_month)` |
+| `monthly_revenue` | 月營收（單位：**元**，P/S 用） | `(stock_id, year_month)` |
 | `cash_flows_quarterly` | 營業現金流 + 資本支出（P/FCF 用） | `(stock_id, quarter_end_date)` |
 
 ### valuations 欄位分組
@@ -136,9 +136,32 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 ## 部署與排程
 
 - **前端**：Vercel，自動部署 main 分支
-- **排程**：GitHub Actions
-  - 每日收盤後：`daily_price_update.py`
-  - 財報季：`quarterly_eps_update.py`
+- **排程**：GitHub Actions（私有 repo，免費額度 **2,000 分鐘／月**，設計時須試算）
+
+| Workflow | 時機 | 內容 | 耗時 |
+|----------|------|------|------|
+| `daily_update.yml` | 交易日 14:30 | 股價 + 各模型狀態 | ~1 分 |
+| `monthly_fundamentals.yml` | 每月 11 日 | 月營收（OpenAPI）+ 重算 | ~2 小時 |
+| `quarterly_eps.yml` | 財報季每週一 | EPS（FinMind）+ 重算 P/E | 遞減，首次 ~4.2 小時 |
+| `quarterly_fundamentals.yml` | 財報季 2 次 | 淨值（OpenAPI）+ 現金流（FinMind）+ 重算 | ~6.5 小時 |
+| `dividends_update.yml` | 7 月／9 月各一次 | 股利（FinMind）+ 重算 | ~6.5 小時 |
+| `weekly_validate.yml` | 每週一 09:00 | 估值一致性抽驗 | ~2 分 |
+
+### 資料來源選擇原則
+
+**優先用 TWSE／TPEx OpenAPI 的整批端點**，只在沒有對應端點時才用 FinMind：
+
+- FinMind 免費版每次呼叫需間隔 6.5 秒 → 全市場一輪約 **4.2 小時**
+- OpenAPI 整批端點一次回傳全市場 → **數秒**
+
+| 資料 | 來源 | 端點 |
+|------|------|------|
+| 股價 | TWSE/TPEx OpenAPI | 3 次呼叫（上市／上櫃／興櫃） |
+| 月營收 | TWSE/TPEx OpenAPI | `t187ap05_L`／`mopsfin_t187ap05_O`／`t187ap05_R` |
+| 每股淨值、負債比 | TWSE/TPEx OpenAPI | `t187ap07_*`（依市場 × 行業別，約 16 個端點） |
+| EPS | FinMind | 損益表 OpenAPI 疑為累計揭露，未驗證前不改用 |
+| 現金流量表 | FinMind | 無整批 OpenAPI 端點 |
+| 股利 | FinMind | 無整批 OpenAPI 端點 |
 - **手動執行順序**（新環境初始化）：
   1. 在 Supabase 執行 `schema.sql`
   2. `python scripts/init_download.py`
@@ -154,9 +177,18 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 
 ## 常見陷阱
 
-- **Supabase 分頁**：預設 1000 筆上限，所有查詢必須用 `range()` 分頁（參考 `_fetch_paged()`）
+- **Supabase 分頁**：預設 1000 筆上限，所有查詢必須用 `range()` 分頁（參考 `_fetch_paged()`）。
+  分頁時務必加 `order()`：無排序的多次查詢，Postgres 不保證跨頁順序一致，會重複或遺漏。
 - **FinMind 欄位名稱不一致**：各資料集用 `--discover` 模式驗證後再寫入（尤其現金流量表）
 - **時區**：前端一律用 `Asia/Taipei`，Python 腳本用 `datetime.today()` 即台北時間
-- **listed_shares 單位**：千股（和 monthly_revenue 的千元單位抵消，得到元/股）
+- **listed_shares 單位**：千股。每股數值一律為 `元 ÷ (listed_shares × 1000)`
+- **現金流量表是「年度累計」**：台灣財報的現金流量表逐季累加、每年 Q1 重置
+  （台積電 2025：0.63→1.12→1.55→2.27 兆）。算 TTM 前**必須先還原單季**
+  （`calculate_alt_valuations.decumulate()`），直接加總會高估約 2.5 倍。
+  **EPS 與損益表則是單季值**，不可一併處理——FinMind 兩者行為不同。
+- **金融股財報格式不同**：金控／保險／證券期貨業的會計科目與一般業不同
+  （無 `EquityAttributableToOwnersOfParent`、`CapitalStock`），
+  交易所 OpenAPI 亦分行業別提供端點（`_ci` 一般業／`_fh` 金控／`_ins` 保險…）。
+  只抓 `_ci` 會漏掉全部金控股。
 - **P/FCF 負值**：FCF 為負時跳過（不納入百分位計算，也不顯示目標價）
 - **Next.js 15 params**：`params` 是 `Promise<{code: string}>`，必須 `await params`

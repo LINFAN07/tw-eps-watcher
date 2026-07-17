@@ -19,6 +19,43 @@ async function fetchAllPrices(db: SupabaseClient, stockId: string) {
   return all
 }
 
+const QUARTER_INDEX: Record<string, number> = { '03': 1, '06': 2, '09': 3, '12': 4 }
+
+type CashFlowRow = { quarter_end_date: string; operating_cf: number | null; capex: number | null }
+
+// 還原「年初至今累計」為單季 FCF。
+// 台灣現金流量表以年度累計揭露（Q1 重置、逐季累加），
+// 例如台積電 2025 年營業現金流為 0.63→1.12→1.55→2.27 兆，
+// 直接四季相加會得到 5.57 兆，實際 TTM 僅約 2.3 兆。
+// 規則：該年度第一季直接採用，其餘減去同年度前一季；前一季缺漏則剔除該筆。
+function decumulate(rows: CashFlowRow[]): { date: string; fcf: number }[] {
+  const cumulative = new Map<string, { op: number; cx: number }>()
+  for (const r of rows) {
+    const qi = QUARTER_INDEX[r.quarter_end_date.slice(5, 7)]
+    if (!qi) continue
+    cumulative.set(`${r.quarter_end_date.slice(0, 4)}-${qi}`, {
+      op: Number(r.operating_cf ?? 0),
+      cx: Number(r.capex ?? 0),
+    })
+  }
+
+  const out: { date: string; fcf: number }[] = []
+  for (const r of rows) {
+    const year = r.quarter_end_date.slice(0, 4)
+    const qi = QUARTER_INDEX[r.quarter_end_date.slice(5, 7)]
+    if (!qi) continue
+    const cur = cumulative.get(`${year}-${qi}`)!
+    if (qi === 1) {
+      out.push({ date: r.quarter_end_date, fcf: cur.op + cur.cx })
+      continue
+    }
+    const prev = cumulative.get(`${year}-${qi - 1}`)
+    if (!prev) continue   // 同年度前一季缺漏，無法還原
+    out.push({ date: r.quarter_end_date, fcf: (cur.op - prev.op) + (cur.cx - prev.cx) })
+  }
+  return out
+}
+
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
   const { code } = await params
   const db = getSupabase()
@@ -42,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   if (!listedShares || listedShares <= 0)
     return NextResponse.json({ error: '流通股數資料不足' }, { status: 404 })
 
-  // 季度現金流序列（operating_cf + capex，單位千元）
+  // 季度現金流序列（operating_cf + capex，單位：元）
   const { data: cfRaw } = await db.from('cash_flows_quarterly')
     .select('quarter_end_date,operating_cf,capex')
     .eq('stock_id', code)
@@ -51,17 +88,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   if (!cfRaw || cfRaw.length < 4)
     return NextResponse.json({ error: '現金流資料不足（需至少 4 季）' }, { status: 404 })
 
-  // 每季計算 TTM FCF per share（滾動 4 季合計）
-  // FCF = operating_cf + capex（capex 通常為負），單位千元
-  // FCF per share = 千元 ÷ (千股 × 1000) = 元/股
+  const quarterly = decumulate(cfRaw)
+  if (quarterly.length < 4)
+    return NextResponse.json({ error: '現金流資料不足（需至少 4 季）' }, { status: 404 })
+
+  // 每季計算 TTM FCF per share（滾動 4 個「單季」合計）
+  // FCF = operating_cf + capex（capex 通常為負），單位：元
+  // FCF per share = 元 ÷ (千股 × 1000) = 元/股
   const ttmFcf: { date: string; fcfPerShare: number }[] = []
-  for (let i = 3; i < cfRaw.length; i++) {
-    const window = cfRaw.slice(i - 3, i + 1)
-    const fcf = window.reduce(
-      (s, q) => s + Number(q.operating_cf ?? 0) + Number(q.capex ?? 0), 0
-    )
+  for (let i = 3; i < quarterly.length; i++) {
+    const fcf = quarterly.slice(i - 3, i + 1).reduce((s, q) => s + q.fcf, 0)
     const fcfPs = fcf / (listedShares * 1000)
-    if (fcfPs > 0) ttmFcf.push({ date: cfRaw[i].quarter_end_date, fcfPerShare: fcfPs })
+    if (fcfPs > 0) ttmFcf.push({ date: quarterly[i].date, fcfPerShare: fcfPs })
   }
 
   if (ttmFcf.length === 0)

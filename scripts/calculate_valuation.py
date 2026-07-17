@@ -251,7 +251,16 @@ def run(stock_ids: list[str] | None = None):
                 print(f"  [{idx}/{total}] {stock_id} -> 寫入錯誤: {e}")
                 skipped += 1
         else:
-            print(f"  [{idx}/{total}] {stock_id} -> 跳過")
+            # 估值失效（長期虧損、資料不足等）：清除既有目標價。
+            # 若僅跳過，資料庫會永久殘留上次算出的舊值，且不再有任何機制修正。
+            try:
+                supabase.table("valuations").update({
+                    "cheap_price": None, "fair_price": None, "expensive_price": None,
+                    "status": "無法計算",
+                }).eq("stock_id", stock_id).execute()
+                print(f"  [{idx}/{total}] {stock_id} -> 無法計算，已清除舊目標價")
+            except Exception as e:
+                print(f"  [{idx}/{total}] {stock_id} -> 清除舊目標價失敗: {e}")
             skipped += 1
 
     print(f"\n完成：成功 {success} 支，跳過 {skipped} 支")

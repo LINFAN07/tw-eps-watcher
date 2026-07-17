@@ -4,6 +4,8 @@ import CheapLeaderboardClient, { type LeaderboardRow, type LeaderboardData } fro
 // P/E 特有：這兩種警告代表估值模型失真，不應出現在 P/E 排行榜
 const UNRELIABLE_WARNINGS = ['EPS 長期偏低', '顯著高於長期均值']
 
+const PAGE = 1000
+
 async function fetchModel(
   db: ReturnType<typeof getSupabase>,
   model: 'pe' | 'pb' | 'ps' | 'pfcf'
@@ -13,16 +15,24 @@ async function fetchModel(
   const peExtra   = model === 'pe' ? ',warning,nonop_warning' : ''
   const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra},stocks(name,industry,market)`
 
-  const { data } = await db.from('valuations')
-    .select(selectFields)
-    .eq(statusCol, '便宜')
-    .gt('current_price', 0)
-    .not(priceCol, 'is', null)
-    .limit(200)
+  // 排序鍵（現價 ÷ 便宜價）是計算值，資料庫無法排序，必須取回完整候選再排。
+  // 原本只取前 200 筆，但「便宜」股最多達 525 支（P/B），
+  // 導致排行榜是從任意子集挑出的前 50 名，而非真正的前 50。
+  const data: Record<string, unknown>[] = []
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page, error } = await db.from('valuations')
+      .select(selectFields)
+      .eq(statusCol, '便宜')
+      .gt('current_price', 0)
+      .not(priceCol, 'is', null)
+      .order('stock_id')   // 固定排序，確保跨頁不重複、不遺漏
+      .range(offset, offset + PAGE - 1)
+    if (error || !page) return []
+    data.push(...(page as unknown as Record<string, unknown>[]))
+    if (page.length < PAGE) break
+  }
 
-  if (!data) return []
-
-  let rows: LeaderboardRow[] = (data as unknown as Record<string, unknown>[]).map(r => ({
+  let rows: LeaderboardRow[] = data.map(r => ({
     stock_id:         r.stock_id as string,
     current_price:    Number(r.current_price),
     cheap_price:      Number(r[priceCol]),
@@ -55,16 +65,19 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     'stocks(name,industry,market)',
   ].join(',')
 
-  // 全市場約 1500 支，分兩批確保取完整資料
-  const [batch1, batch2] = await Promise.all([
-    db.from('valuations').select(fields).gt('current_price', 0).range(0, 999),
-    db.from('valuations').select(fields).gt('current_price', 0).range(1000, 1999),
-  ])
-
-  const all = [
-    ...(batch1.data ?? []),
-    ...(batch2.data ?? []),
-  ] as unknown as Record<string, unknown>[]
+  // 逐頁取到底，不寫死批次數（全市場已達 2238 支，原本寫死兩批會漏掉尾端）。
+  // 兩次獨立查詢若未指定 order，Postgres 不保證跨查詢順序一致，可能重複或遺漏。
+  const all: Record<string, unknown>[] = []
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page, error } = await db.from('valuations')
+      .select(fields)
+      .gt('current_price', 0)
+      .order('stock_id')
+      .range(offset, offset + PAGE - 1)
+    if (error || !page) break
+    all.push(...(page as unknown as Record<string, unknown>[]))
+    if (page.length < PAGE) break
+  }
 
   const rows: LeaderboardRow[] = []
 

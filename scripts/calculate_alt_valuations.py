@@ -38,6 +38,27 @@ MIN_PFCF_QTRS    = 8   # P/FCF：至少 2 年季度資料
 MIN_YIELD_MONTHS = 36  # 殖利率：至少 3 年月資料（需涵蓋多個配息週期）
 
 
+# 各模型的輸出欄位（數值欄位, 狀態欄位）。
+# 模型從「可計算」變成「不適用」時，必須把舊值寫回 null，
+# 否則上次算出的數字會永久殘留（例如 FCF 轉負後仍顯示舊的 P/FCF 目標價）。
+MODEL_FIELDS = {
+    "pb":    (["pb_book_value", "pb_cheap_pb", "pb_fair_pb", "pb_expensive_pb",
+               "pb_cheap_price", "pb_fair_price", "pb_expensive_price"], "pb_status"),
+    "ps":    (["ps_revenue_per_share", "ps_cheap_ps", "ps_fair_ps", "ps_expensive_ps",
+               "ps_cheap_price", "ps_fair_price", "ps_expensive_price"], "ps_status"),
+    "pfcf":  (["pfcf_per_share", "pfcf_cheap_pfcf", "pfcf_fair_pfcf", "pfcf_expensive_pfcf",
+               "pfcf_cheap_price", "pfcf_fair_price", "pfcf_expensive_price"], "pfcf_status"),
+    "yield": (["yield_ttm_div", "yield_cheap_yield", "yield_fair_yield", "yield_expensive_yield",
+               "yield_cheap_price", "yield_fair_price", "yield_expensive_price"], "yield_status"),
+}
+
+
+def cleared(model: str) -> dict:
+    """模型不適用時要寫入的欄位值：數值全部 null，狀態標為「無法計算」"""
+    cols, status_col = MODEL_FIELDS[model]
+    return {**{c: None for c in cols}, status_col: "無法計算"}
+
+
 def _fetch_paged(table: str, filters: dict, columns: str) -> list:
     """分頁取得 Supabase 資料（繞過 1000 筆上限）"""
     all_rows, offset = [], 0
@@ -74,6 +95,39 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     df["date"]        = df["date"].astype(str)
     df["close_price"] = pd.to_numeric(df["close_price"])
     return df.sort_values("date").reset_index(drop=True)
+
+
+# 季末月份 → 該年度第幾季
+QUARTER_INDEX = {"03": 1, "06": 2, "09": 3, "12": 4}
+
+
+def decumulate(df: pd.DataFrame, cols: tuple[str, ...]) -> pd.DataFrame:
+    """
+    還原「年初至今累計」為單季金額。
+
+    台灣現金流量表以年度累計揭露（Q1 重置、逐季累加），
+    例如台積電 2025 年營業現金流為 0.63→1.12→1.55→2.27 兆，
+    直接四季相加會得到 5.57 兆，實際 TTM 僅約 2.3 兆。
+
+    規則：該年度第一季直接採用；其餘季度減去同年度前一季。
+    同年度前一季缺漏時無法還原，該筆剔除（避免產生錯誤數字）。
+    """
+    df = df.sort_values("quarter_end_date").reset_index(drop=True)
+    df["_year"] = df["quarter_end_date"].str[:4]
+    df["_qidx"] = df["quarter_end_date"].str[5:7].map(QUARTER_INDEX)
+    df = df.dropna(subset=["_qidx"]).reset_index(drop=True)
+
+    for col in cols:
+        restored = []
+        for _, row in df.iterrows():
+            if row["_qidx"] == 1:
+                restored.append(row[col])
+                continue
+            prev = df[(df["_year"] == row["_year"]) & (df["_qidx"] == row["_qidx"] - 1)]
+            restored.append(row[col] - float(prev.iloc[0][col]) if not prev.empty else np.nan)
+        df[col] = restored  # 迴圈結束後才寫回，確保相減用的是原始累計值
+
+    return df.dropna(subset=list(cols)).drop(columns=["_year", "_qidx"]).reset_index(drop=True)
 
 
 def get_status(current_price: float, cheap: float, fair: float) -> str:
@@ -159,8 +213,7 @@ def calculate_ps(stock_id: str, price_df: pd.DataFrame, current_price: float, li
 
     # 逐月計算 TTM 營收 per share → 搭配當月股價 → 歷史 P/S 序列
     # revenue 單位：元 / listed_shares 單位：千股 → rps = 元 / (千股×1000) = 元/股
-    ps_series  = []
-    latest_rps = None
+    ps_series = []
 
     for i in range(11, len(rev_df)):
         ttm_rev = float(rev_df.iloc[i - 11: i + 1]["revenue"].sum())
@@ -182,9 +235,11 @@ def calculate_ps(stock_id: str, price_df: pd.DataFrame, current_price: float, li
         ps = price / rps
         if PS_MIN <= ps <= PS_MAX:
             ps_series.append(ps)
-        latest_rps = rps
 
-    if len(ps_series) < 12 or latest_rps is None:
+    # 同 P/FCF：基準值取「最新 12 個月」的 TTM 營收，不沿用迴圈殘留值
+    latest_rps = float(rev_df.iloc[-12:]["revenue"].sum()) / (listed_shares * 1000)
+
+    if len(ps_series) < 12 or latest_rps <= 0:
         return {}
 
     ps_arr       = np.array(ps_series)
@@ -224,21 +279,23 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     cf_df["capex"]            = pd.to_numeric(cf_df["capex"],        errors="coerce")
     cf_df = cf_df.dropna(subset=["operating_cf", "capex"]).sort_values("quarter_end_date").reset_index(drop=True)
 
+    # 原始資料為年度累計，必須先還原為單季金額才能加總出 TTM
+    cf_df = decumulate(cf_df, ("operating_cf", "capex"))
+
     if len(cf_df) < MIN_PFCF_QTRS:
         return {}
 
     # FCF = 營業現金流 + 資本支出（capex 為負值，加法等於扣除）
     cf_df["fcf"] = cf_df["operating_cf"] + cf_df["capex"]
 
-    pfcf_series    = []
-    latest_fcf_ps  = None
+    pfcf_series = []
 
     for i in range(3, len(cf_df)):
         ttm_fcf = float(cf_df.iloc[i - 3: i + 1]["fcf"].sum())
         # 現金流量表單位為元；listed_shares 單位為千股
         # 元 ÷ (千股 × 1000) = 元/股
         fcf_ps  = ttm_fcf / (listed_shares * 1000)
-        if fcf_ps <= 0:  # 負 FCF 無意義，跳過
+        if fcf_ps <= 0:  # 負 FCF 無意義，不納入百分位
             continue
 
         q_date = cf_df.iloc[i]["quarter_end_date"]
@@ -250,9 +307,13 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
         pfcf = price / fcf_ps
         if PFCF_MIN <= pfcf <= PFCF_MAX:
             pfcf_series.append(pfcf)
-        latest_fcf_ps = fcf_ps
 
-    if len(pfcf_series) < MIN_PFCF_QTRS or latest_fcf_ps is None or latest_fcf_ps <= 0:
+    # 基準值必須取「最新一季」的 TTM FCF，不能沿用迴圈中最後一個為正的舊季度，
+    # 否則近期 FCF 轉負的公司會用過期現金流算出目標價。
+    # 最新 TTM FCF 為負代表 P/FCF 模型不適用，直接不給估值。
+    latest_fcf_ps = float(cf_df.iloc[-4:]["fcf"].sum()) / (listed_shares * 1000)
+
+    if len(pfcf_series) < MIN_PFCF_QTRS or latest_fcf_ps <= 0:
         return {}
 
     pfcf_arr        = np.array(pfcf_series)
@@ -366,31 +427,25 @@ def run(stock_ids: list[str] | None = None):
             current_price  = float(price_df.iloc[-1]["close_price"])
             listed_shares  = shares_map.get(stock_id)
 
-            updates: dict = {}
-
+            # 模型算不出來時一律寫回 cleared()，確保舊值不會殘留
             pb = calculate_pb(stock_id, price_df, current_price)
-            if pb:
-                updates.update(pb)
-                success_pb += 1
-
             ps = calculate_ps(stock_id, price_df, current_price, listed_shares)
-            if ps:
-                updates.update(ps)
-                success_ps += 1
-
             pfcf = calculate_pfcf(stock_id, price_df, current_price, listed_shares)
-            if pfcf:
-                updates.update(pfcf)
-                success_pfcf += 1
-
             yld = calculate_yield(stock_id, price_df, current_price)
-            if yld:
-                updates.update(yld)
-                success_yield += 1
 
-            if updates:
-                updates["stock_id"] = stock_id
-                supabase.table("valuations").upsert(updates).execute()
+            success_pb    += bool(pb)
+            success_ps    += bool(ps)
+            success_pfcf  += bool(pfcf)
+            success_yield += bool(yld)
+
+            updates = {
+                "stock_id": stock_id,
+                **(pb   or cleared("pb")),
+                **(ps   or cleared("ps")),
+                **(pfcf or cleared("pfcf")),
+                **(yld  or cleared("yield")),
+            }
+            supabase.table("valuations").upsert(updates).execute()
 
             pb_s   = pb.get("pb_status",    "—") if pb   else "—"
             ps_s   = ps.get("ps_status",    "—") if ps   else "—"
