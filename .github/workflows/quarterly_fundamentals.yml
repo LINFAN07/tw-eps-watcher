@@ -2,23 +2,25 @@ name: 財報季基本面更新
 
 on:
   schedule:
-    # 財報季各執行 2 次：申報截止日前一週、截止日後數日（確保收齊補件）
-    # Q1（截止 5/15）
-    - cron: '0 8 8,18 5 *'
-    # Q2（截止 8/14）
-    - cron: '0 8 7,17 8 *'
-    # Q3（截止 11/14）
-    - cron: '0 8 7,17 11 *'
-    # Q4／年報（截止 3/31）
-    - cron: '0 8 24 3 *'
-    - cron: '0 8 3 4 *'
+    # 每個財報季申報截止後執行一次（資產負債表與現金流量表一季才變動一次，
+    # 且兩者皆需 FinMind 逐股呼叫各約 4.2 小時，跑太多次會超出
+    # 私有 repo 每月 2,000 分鐘的免費額度）。
+    - cron: '0 8 18 5 *'    # Q1（截止 5/15）
+    - cron: '0 8 17 8 *'    # Q2（截止 8/14）
+    - cron: '0 8 17 11 *'   # Q3（截止 11/14）
+    - cron: '0 8 3 4 *'     # Q4／年報（截止 3/31）
   workflow_dispatch:
 
 jobs:
-  # 每股淨值與負債比：TWSE/TPEx OpenAPI 整批端點，數分鐘完成
+  # 每股淨值與負債比
+  #
+  # 刻意使用 FinMind 而非 TWSE OpenAPI 的「每股參考淨值」：
+  # OpenAPI 只提供最新一季，無歷史資料，而 P/B 百分位帶需要至少 8 季；
+  # 且兩者對「特別股」的處理不同（官方以總股本計算、FinMind 僅普通股），
+  # 混用會讓同一支股票的歷史序列與最新值基準不一致，使百分位帶失真。
   balance:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 330
 
     steps:
       - name: Checkout
@@ -33,11 +35,12 @@ jobs:
       - name: 安裝套件
         run: pip install requests supabase python-dotenv
 
-      - name: 更新每股淨值與負債比
+      - name: 下載資產負債表（FinMind）
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scripts/update_fundamentals.py --balance
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/download_balance_sheet.py
 
   # 現金流量表：無整批 OpenAPI 端點，只能逐股呼叫 FinMind（約 4.2 小時）
   # 因此一季只跑 2 次，不像淨值那樣可以頻繁更新

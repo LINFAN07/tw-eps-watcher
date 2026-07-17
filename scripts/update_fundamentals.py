@@ -1,22 +1,20 @@
 """
-基本面資料增量更新（月營收 + 每股淨值 + 負債比）
+月營收增量更新（P/S 估值原始資料）
 
-改用 TWSE／TPEx OpenAPI 的「整批」端點，取代 FinMind 逐股呼叫：
+改用 TWSE／TPEx OpenAPI 的整批端點，取代 FinMind 逐股呼叫：
+3 次呼叫（上市／上櫃／興櫃）取代 2,300+ 次 × 6.5 秒 ≈ 4.2 小時。
 
-  月營收    ：3 次呼叫（上市／上櫃／興櫃）取代 2,300+ 次 × 6.5 秒 ≈ 4.2 小時
-  資產負債表：依「市場 × 行業別」分別提供端點，合計約 16 次呼叫
+單位：OpenAPI 為「千元」，資料庫存「元」，需 ×1000。
 
-FinMind 版的 download_*.py 仍保留，用於首次建立 10 年歷史資料；
-本腳本只做「最新一期」的增量更新，供排程每月／每季執行。
-
-單位對照（務必注意）：
-  OpenAPI 月營收    ：千元 → 資料庫存「元」，需 ×1000
-  OpenAPI 每股參考淨值：元／股，直接採用（官方公告值，含金控等特殊財報格式）
+為何只做月營收，不做資產負債表：
+OpenAPI 的「每股參考淨值」雖然是官方值且涵蓋金控等特殊財報格式，
+但只提供最新一季、無歷史資料，而 P/B 百分位帶至少需要 8 季；
+且它對特別股的處理與 FinMind 不同（官方以總股本計算、FinMind 僅普通股），
+混用會讓歷史序列與最新值基準不一致。淨值一律由 download_balance_sheet.py
+（FinMind）供應，以確保整條序列基準相同。
 
 用法：
-  python scripts/update_fundamentals.py              # 月營收 + 資產負債表
-  python scripts/update_fundamentals.py --revenue    # 只更新月營收
-  python scripts/update_fundamentals.py --balance    # 只更新資產負債表
+  python scripts/update_fundamentals.py
 """
 
 import os
@@ -45,20 +43,6 @@ REVENUE_ENDPOINTS = [
     ("上櫃", TPEX + "mopsfin_t187ap05_O",  False),
     ("興櫃", TPEX + "t187ap05_R",          False),
 ]
-
-# 資產負債表：金控／保險／證券期貨業的財報格式與一般業不同，
-# 交易所因此分別提供端點；漏掉 _fh 等於漏掉所有金控股。
-BALANCE_ENDPOINTS = (
-    [("上市", TWSE + f"t187ap07_L_{k}",         True)  for k in ("ci", "fh", "ins", "bd", "mim", "basi")]
-    + [("上櫃", TPEX + f"mopsfin_t187ap07_O_{k}", False) for k in ("ci", "fh", "ins", "bd", "mim")]
-    + [("興櫃", TPEX + f"mopsfin_t187ap07_U_{k}", False) for k in ("ci", "fh", "ins", "bd", "mim", "basi")]
-)
-
-# 同一語意在不同行業別端點的欄位名稱不同（一般業用「總額」、金控用「總計」）
-ASSET_KEYS = ("資產總額", "資產總計")
-LIAB_KEYS  = ("負債總額", "負債總計")
-
-QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
 
 
 def fetch_json(url: str, verify_ssl: bool) -> list:
@@ -89,15 +73,6 @@ def to_number(raw) -> float | None:
         return None
 
 
-def pick(row: dict, keys: tuple[str, ...]) -> float | None:
-    """依序嘗試多個欄位名稱，取第一個有值的"""
-    for k in keys:
-        v = to_number(row.get(k))
-        if v is not None:
-            return v
-    return None
-
-
 def stock_id_of(row: dict) -> str:
     """
     取股票代碼。TWSE 用「公司代號」，TPEx 的資產負債表改用 SecuritiesCompanyCode
@@ -119,18 +94,6 @@ def roc_month_to_date(roc_ym: str) -> str | None:
     if not 1 <= month <= 12:
         return None
     return f"{year:04d}-{month:02d}-01"
-
-
-def roc_quarter_to_date(roc_year, quarter) -> str | None:
-    """民國年 + 季別（115, 1）→ 季末日（2026-03-31）"""
-    suffix = QUARTER_END.get(str(quarter).strip())
-    if not suffix:
-        return None
-    try:
-        year = int(str(roc_year).strip()) + 1911
-    except ValueError:
-        return None
-    return f"{year}-{suffix}"
 
 
 def known_stock_ids() -> set[str]:
@@ -184,63 +147,10 @@ def update_monthly_revenue(known: set[str]) -> int:
     return len(rows)
 
 
-def update_balance_sheet(known: set[str]) -> int:
-    """更新最新一季每股淨值與負債比（採用交易所公告的每股參考淨值）"""
-    print("\n=== 資產負債表（每股淨值 + 負債比）===")
-    merged: dict[tuple[str, str], dict] = {}
-
-    for market, url, verify in BALANCE_ENDPOINTS:
-        data = fetch_json(url, verify)
-        added = 0
-        for r in data:
-            sid = stock_id_of(r)
-            if sid not in known:
-                continue
-            qdate = roc_quarter_to_date(r.get("年度", ""), r.get("季別", ""))
-            bvps  = to_number(r.get("每股參考淨值"))
-            if not qdate or bvps is None or bvps <= 0:
-                continue
-
-            assets = pick(r, ASSET_KEYS)
-            liab   = pick(r, LIAB_KEYS)
-            debt_ratio = round(liab / assets * 100, 2) if assets and liab and assets > 0 else None
-
-            merged[(sid, qdate)] = {
-                "stock_id":            sid,
-                "quarter_end_date":    qdate,
-                "book_value_per_share": round(bvps, 4),
-                "debt_ratio":          debt_ratio,
-            }
-            added += 1
-        label = url.rsplit("_", 1)[-1]
-        print(f"  {market} ({label}): {added} 筆")
-
-    rows = list(merged.values())
-    if rows:
-        upsert_batch("balance_sheet_quarterly", rows, "stock_id,quarter_end_date")
-        quarters = sorted({r["quarter_end_date"] for r in rows})
-        print(f"  ✅ 寫入 {len(rows)} 筆，季度：{', '.join(quarters)}")
-    else:
-        print("  ⚠️  無資料")
-    return len(rows)
-
-
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="以 TWSE/TPEx OpenAPI 增量更新基本面資料")
-    parser.add_argument("--revenue", action="store_true", help="只更新月營收")
-    parser.add_argument("--balance", action="store_true", help="只更新資產負債表")
-    args = parser.parse_args()
-
-    do_all = not (args.revenue or args.balance)
-    known  = known_stock_ids()
+    known = known_stock_ids()
     print(f"資料庫既有股票：{len(known)} 支")
-
-    if args.revenue or do_all:
-        update_monthly_revenue(known)
-    if args.balance or do_all:
-        update_balance_sheet(known)
-
+    update_monthly_revenue(known)
     print("\n完成！")
 
 

@@ -80,6 +80,10 @@ def download_stock_bvps(stock_id: str) -> int:
     capital_by_date: dict[str, float] = {}
     assets_by_date:  dict[str, float] = {}
     liab_by_date:    dict[str, float] = {}
+    # 金融業專用（欄位分類與一般業不同）
+    fin_equity_by_date:  dict[str, float] = {}
+    fin_nci_by_date:     dict[str, float] = {}
+    fin_capital_by_date: dict[str, float] = {}
 
     for r in raw:
         date_str = r.get("date", "").strip()
@@ -99,6 +103,26 @@ def download_stock_bvps(stock_id: str) -> int:
             assets_by_date[date_str] = val
         elif type_str == "Liabilities":          # FinMind 欄位名稱（非 TotalLiabilities）
             liab_by_date[date_str] = val
+        # ── 金控／保險／證券期貨業採用不同會計科目分類，
+        #    沒有 EquityAttributableToOwnersOfParent 與 CapitalStock，
+        #    需改由「總權益 − 非控制權益」與「普通股股本」推算。
+        #    只在一般業欄位缺漏時採用（下方 setdefault 保證不覆蓋既有值）。
+        elif type_str == "Equity":
+            fin_equity_by_date[date_str] = val
+        elif type_str == "NoncontrollingInterests":
+            fin_nci_by_date[date_str] = val
+        elif type_str == "OrdinaryShare":
+            fin_capital_by_date[date_str] = val
+
+    # 金融業補位：一般業欄位缺漏時，以「總權益 − 非控制權益」為母公司權益、
+    # 以普通股股本為股本。setdefault 確保一般業既有值不被覆蓋。
+    for date_str, fin_equity in fin_equity_by_date.items():
+        parent_equity = fin_equity - fin_nci_by_date.get(date_str, 0.0)
+        if parent_equity > 0:
+            equity_by_date.setdefault(date_str, parent_equity)
+        fin_cap = fin_capital_by_date.get(date_str)
+        if fin_cap and fin_cap > 0:
+            capital_by_date.setdefault(date_str, fin_cap)
 
     rows = []
     for date_str, equity in equity_by_date.items():

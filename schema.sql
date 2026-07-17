@@ -153,3 +153,24 @@ ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS yield_fair_price      DECIMAL(10, 2),
   ADD COLUMN IF NOT EXISTS yield_expensive_price DECIMAL(10, 2),
   ADD COLUMN IF NOT EXISTS yield_status          VARCHAR(10);
+
+-- ─────────────────────────────────────────────────────────
+-- 修正：P/S 與 P/FCF 倍數欄位寬度不足（2026-07-17）
+--
+-- calculate_alt_valuations.py 允許的倍數上限為 200（PS_MAX / PFCF_MAX），
+-- 但欄位定義為 DECIMAL(6, 4)，最大只能存到 99.9999。
+-- 倍數落在 100~200 的股票寫入時觸發 numeric field overflow，
+-- 且整筆 upsert 一併失敗，導致該股票的 P/B / P/S / P/FCF / 殖利率全部寫不進去
+-- （實測全市場有 39 支受影響）。
+--
+-- pb_* 維持 DECIMAL(6, 4)：PB_MAX 為 50，不會溢位。
+-- yield_* 維持 DECIMAL(6, 4)：殖利率以百分比儲存，不會達到 100%。
+-- ─────────────────────────────────────────────────────────
+
+ALTER TABLE valuations
+  ALTER COLUMN ps_cheap_ps          TYPE DECIMAL(8, 4),
+  ALTER COLUMN ps_fair_ps           TYPE DECIMAL(8, 4),
+  ALTER COLUMN ps_expensive_ps      TYPE DECIMAL(8, 4),
+  ALTER COLUMN pfcf_cheap_pfcf      TYPE DECIMAL(8, 4),
+  ALTER COLUMN pfcf_fair_pfcf       TYPE DECIMAL(8, 4),
+  ALTER COLUMN pfcf_expensive_pfcf  TYPE DECIMAL(8, 4);

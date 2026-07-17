@@ -29,7 +29,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scripts/update_fundamentals.py --revenue
+        run: python scripts/update_fundamentals.py
 
   # 月營收是 P/S 的基準值，更新後需重算才會反映到網站
   recalculate:
