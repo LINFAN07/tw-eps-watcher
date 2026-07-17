@@ -86,6 +86,12 @@
 - [x] 定期驗證估值計算結果是否合理（抽樣比對）
   - **實作**：`scripts/validate_valuations.py` 每週隨機抽樣 100 支股票，驗證價格順序（cheap < fair < expensive）、status 與現價一致性、倍數合理範圍，發現嚴重問題寄送 Email；搭配 `.github/workflows/weekly_validate.yml` 每週一 09:00 自動執行
 
+### 已知問題（2026-07-17 全專案 review 發現，尚未處理）
+
+- [ ] **P/FCF 可能採用過期的現金流**：`calculate_alt_valuations.py` 的 `latest_fcf_ps` 在迴圈中被 `continue` 跳過負值，存的是「最後一個為正的季度」而非最新季度。若公司近期 FCF 轉負，網站會用舊 FCF 算目標價且無任何提示，與「FCF 為負時不顯示目標價」的設計不符。需先確認受影響股票數。
+- [ ] **估值失效時舊資料不會被清除**：`calculate_valuation()` 回傳 `None` 時（如 7731 這類興櫃半年報且長期虧損的公司），`run()` 直接跳過，資料庫殘留的舊目標價永遠不會被清掉。已手動修正 7731，但邏輯缺口仍在。
+- [ ] **`valuations.updated_at` 不反映真實更新時間**：`daily_price_update.py` 只寫 `current_price` 與各模型 status，不動 `updated_at`，導致前端顯示的「最後更新」停留在上次全量計算的日期，會讓使用者誤以為資料很舊。
+
 ---
 
 ## 功能規劃 🗺️
