@@ -14,6 +14,7 @@
 
 import os
 import sys
+import time
 import requests
 from datetime import date, datetime, timezone
 from dotenv import load_dotenv
@@ -34,6 +35,35 @@ ESB_URL  = "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics"
 
 # 官網 rwd 端點會擋掉沒有 User-Agent 的請求
 UA = {"User-Agent": "Mozilla/5.0"}
+
+
+class FetchError(Exception):
+    """
+    來源抓取失敗。
+
+    必須與「休市所以沒資料」嚴格區分：前者是故障、要讓工作失敗並發通知，
+    後者是正常狀況。2026-07-14 的事故即因兩者混為一談——
+    TPEx 連線中斷（IncompleteRead），fetch 吞掉例外回傳空 dict，
+    整個上櫃市場（約 900 支）當日沒有寫入，而工作回報「完成！」，
+    缺口三天後才被跨來源比對發現。
+    """
+
+
+def get_json(url: str, retries: int = 3, **kwargs):
+    """
+    帶重試的 GET。全部重試失敗就拋 FetchError，不可回傳空值——
+    一旦回傳空值，呼叫端就無法分辨「休市」與「抓取失敗」。
+    """
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            return requests.get(url, timeout=30, **kwargs).json()
+        except Exception as e:
+            last_error = e
+            print(f"  第 {attempt}/{retries} 次請求失敗：{e}")
+            if attempt < retries:
+                time.sleep(5)
+    raise FetchError(f"{url} 連續 {retries} 次失敗：{last_error}")
 
 
 def clean_price(s) -> float | None:
@@ -61,12 +91,7 @@ def fetch_twse_prices() -> tuple[str | None, dict[str, float]]:
     （休市、來源延遲皆會造成落差），用系統日期蓋章會把舊價寫成今日價。
     """
     today = date.today().strftime("%Y%m%d")
-    try:
-        resp = requests.get(TWSE_URL, params={"date": today, "type": "ALL", "response": "json"},
-                            headers=UA, timeout=30).json()
-    except Exception as e:
-        print(f"  TWSE 取得失敗: {e}")
-        return None, {}
+    resp = get_json(TWSE_URL, params={"date": today, "type": "ALL", "response": "json"}, headers=UA)
 
     if resp.get("stat") != "OK":
         # 休市時為「很抱歉，沒有符合條件的資料!」，端點自身即可判斷交易日
@@ -99,12 +124,7 @@ def fetch_twse_prices() -> tuple[str | None, dict[str, float]]:
 
 def fetch_tpex_prices() -> tuple[str | None, dict[str, float]]:
     """上櫃收盤價。回傳 (資料日期, {股票代碼: 收盤價})"""
-    try:
-        data = requests.get(TPEX_URL, timeout=30).json()
-    except Exception as e:
-        print(f"  TPEx 上櫃取得失敗: {e}")
-        return None, {}
-
+    data = get_json(TPEX_URL)
     iso = roc_to_iso(data[0].get("Date")) if data else None
     prices = {str(r.get("SecuritiesCompanyCode", "")).strip(): p
               for r in data if (p := clean_price(r.get("Close")))}
@@ -119,12 +139,7 @@ def fetch_esb_prices() -> tuple[str | None, dict[str, float]]:
     兩者是不同的指標，混著存進 close_price 會讓同一支股票的歷史序列基準不一致。
     當日無成交者（LatestPrice 為 0）直接不給價格，而非填補——沒有成交就是沒有價格。
     """
-    try:
-        data = requests.get(ESB_URL, timeout=30).json()
-    except Exception as e:
-        print(f"  TPEx 興櫃取得失敗: {e}")
-        return None, {}
-
+    data = get_json(ESB_URL)
     iso = roc_to_iso(data[0].get("Date")) if data else None
     prices = {}
     for r in data:
@@ -214,20 +229,28 @@ def run():
     print(f"=== 每日股價更新：{date.today()} ===\n")
 
     # 1. 取得各市場收盤價（各自帶有來源標記的資料日期）
-    print("取得上市股票收盤價（TWSE）...")
-    twse_date, twse = fetch_twse_prices()
-    print(f"  {len(twse)} 支，資料日期 {twse_date or '無'}")
+    #    任一來源抓取失敗即讓整個工作失敗——少一個市場就是資料缺口，
+    #    絕不可吞掉錯誤後回報成功（2026-07-14 上櫃缺口即因此三天無人知悉）。
+    sources, failed = [], []
+    for label, fetch in (("上市（TWSE）", fetch_twse_prices),
+                         ("上櫃（TPEx）", fetch_tpex_prices),
+                         ("興櫃（TPEx）", fetch_esb_prices)):
+        print(f"取得{label}收盤價...")
+        try:
+            src_date, prices = fetch()
+            print(f"  {len(prices)} 支，資料日期 {src_date or '無'}")
+            sources.append((src_date, prices))
+        except FetchError as e:
+            print(f"  ❌ {label} 抓取失敗：{e}")
+            failed.append(label)
 
-    print("取得上櫃股票收盤價（TPEx 上櫃）...")
-    tpex_date, tpex = fetch_tpex_prices()
-    print(f"  {len(tpex)} 支，資料日期 {tpex_date or '無'}")
+    if failed:
+        print(f"\n❌ 以下來源抓取失敗，資料不完整：{'、'.join(failed)}")
+        print("   已取得的部分仍會寫入，但工作將以失敗結束以觸發通知。")
 
-    print("取得興櫃股票收盤價（TPEx 興櫃）...")
-    esb_date, esb = fetch_esb_prices()
-    print(f"  {len(esb)} 支，資料日期 {esb_date or '無'}")
-
-    sources = [(twse_date, twse), (tpex_date, tpex), (esb_date, esb)]
-    if not any(d and p for d, p in sources):
+    if not sources or not any(d and p for d, p in sources):
+        if failed:
+            sys.exit(1)          # 全部失敗 ≠ 休市，必須通報
         print("\n今日無交易資料（休市），結束。")
         return
 
@@ -265,6 +288,10 @@ def run():
     # 4. 快速更新估值現價與狀態
     print("\n更新估值...")
     update_valuations({sid: p for sid, (_, p) in all_prices.items()})
+
+    if failed:
+        print(f"\n❌ 部分來源抓取失敗（{'、'.join(failed)}），資料不完整。")
+        sys.exit(1)
 
     print("\n完成！")
 

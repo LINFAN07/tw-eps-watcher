@@ -35,6 +35,24 @@
 計算失敗時「跳過不寫」會讓上次的舊值永久殘留，且再也沒有機制修正它。
 參見 `calculate_valuation.run()` 與 `calculate_alt_valuations.cleared()`。
 
+### 5. 抓取失敗必須讓工作失敗，不得吞掉錯誤後回報成功
+
+「來源故障」與「該筆確實沒有資料」是兩件事，程式碼必須能區分：
+故障要重試，重試仍失敗就拋例外，並讓整個工作以 exit code 1 結束以觸發通知。
+**絕不可** catch 之後回傳空清單——那會讓呼叫端把故障當成「無資料」，
+繼續跑完並回報成功。
+
+**2026-07-14 事故**：`daily_price_update.py` 的 TPEx 連線中斷（IncompleteRead），
+fetch 吞掉例外回傳空 dict，整個上櫃市場（約 900 支）當日沒寫入，
+工作卻回報「完成！」，缺口三天後才被跨來源比對發現。
+
+實作：
+- FinMind 呼叫一律經 `finmind_client.fetch()`（失敗會拋 `FinMindError`），
+  搭配 `FailureTracker`：單支失敗不中斷整批（4 小時的下載不該因一次逾時全毀），
+  但收尾 `tracker.finish()` 若有任何失敗就 exit 1。
+- 交易所呼叫一律經 `daily_price_update.get_json()`（失敗拋 `FetchError`）；
+  任一市場失敗，整個工作以 exit 1 結束。
+
 ### 驗證資料正確性的方法
 
 `scripts/validate_valuations.py` **只檢查內部一致性**，抓不到「資料是舊的」、

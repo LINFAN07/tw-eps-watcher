@@ -21,12 +21,15 @@ jobs:
           cache: 'pip'
 
       - name: 安裝套件
-        run: pip install supabase python-dotenv
+        run: pip install requests supabase python-dotenv
 
-      - name: 執行估值一致性驗證
+      - name: 執行估值驗證（內部一致性 + 與 FinMind 跨來源比對）
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+          # 跨來源比對用；未設定時腳本會跳過該段並印出警告，
+          # 但只驗內部一致性抓不到日期位移與陳舊資料
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python scripts/validate_valuations.py
 
       - name: 驗證失敗 Email 通知

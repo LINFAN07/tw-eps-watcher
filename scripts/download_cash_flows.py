@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import requests
 from supabase import create_client
+import finmind_client as fm
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -50,18 +51,9 @@ CAPEX_TYPES = (
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def finmind_get(dataset: str, stock_id: str, start_date: str) -> list:
-    params = {"dataset": dataset, "data_id": stock_id, "start_date": start_date, "token": FINMIND_TOKEN}
-    for attempt in range(3):
-        try:
-            resp = requests.get(FINMIND_API, params=params, timeout=30).json()
-            if resp.get("status") == 200:
-                return resp.get("data", [])
-            print(f"  ⚠️  API 異常: {resp.get('msg', '未知')}")
-        except Exception as e:
-            print(f"  ⚠️  請求失敗（第 {attempt + 1} 次）: {e}")
-        time.sleep(10)
-    return []
+def finmind_get(dataset: str, stock_id: str | None, start_date: str | None) -> list:
+    """委派給共用客戶端：抓取失敗會拋 FinMindError，不以空清單掩蓋故障"""
+    return fm.fetch(dataset, stock_id, start_date, FINMIND_TOKEN)
 
 
 def fetch_all_stock_ids() -> list[str]:
@@ -153,15 +145,21 @@ def main():
     total     = len(stock_ids)
     print(f"開始下載現金流量表：{total} 支股票，起始日 {START_DATE}")
 
+    tracker = fm.FailureTracker("現金流量表下載")
     written_total = 0
     for i, sid in enumerate(stock_ids, 1):
-        written = download_stock_cash_flows(sid)
+        try:
+            written = download_stock_cash_flows(sid)
+        except fm.FinMindError as e:
+            tracker.record(sid, e)
+            written = 0
         label   = f"寫入 {written} 筆" if written > 0 else "無資料"
         print(f"[{i}/{total}] {sid}: {label}")
         written_total += written
         time.sleep(CALL_INTERVAL)
 
     print(f"\n✅ 完成，共寫入 {written_total} 筆現金流量資料")
+    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
 
 if __name__ == "__main__":
