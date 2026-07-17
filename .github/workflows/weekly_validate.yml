@@ -1,0 +1,46 @@
+name: 每週估值一致性驗證
+
+on:
+  schedule:
+    # 台灣時間每週一早上 09:00（UTC 01:00）
+    - cron: '0 1 * * 1'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install supabase python-dotenv
+
+      - name: 執行估值一致性驗證
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/validate_valuations.py
+
+      - name: 驗證失敗 Email 通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 每週估值一致性驗證失敗"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            每週估值一致性驗證發現嚴重問題，請至以下連結查看錯誤日誌：
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

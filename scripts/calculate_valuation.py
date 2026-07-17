@@ -202,6 +202,12 @@ def calculate_valuation(stock_id: str) -> dict | None:
         status = "昂貴"
 
     def r(v): return round(float(v), 2)
+
+    # EPS 為負時，負值乘以正 P/E 倍數會得到無意義的負數目標價，
+    # 且倍數越大價格越低，導致便宜/合理/昂貴順序顛倒。
+    # 此情況 P/E 模型不適用（status 已標為「無法計算」），目標價一律留空。
+    has_target = effective_eps > 0
+
     return {
         "stock_id":        stock_id,
         "ttm_eps":         r(ttm_eps),
@@ -209,9 +215,9 @@ def calculate_valuation(stock_id: str) -> dict | None:
         "cheap_pe":        r(cheap_pe),
         "fair_pe":         r(fair_pe),
         "expensive_pe":    r(expensive_pe),
-        "cheap_price":     r(effective_eps * cheap_pe),
-        "fair_price":      r(effective_eps * fair_pe),
-        "expensive_price": r(effective_eps * expensive_pe),
+        "cheap_price":     r(effective_eps * cheap_pe) if has_target else None,
+        "fair_price":      r(effective_eps * fair_pe) if has_target else None,
+        "expensive_price": r(effective_eps * expensive_pe) if has_target else None,
         "current_price":   r(current_price),
         "status":          status,
         "warning":         combined_warning,

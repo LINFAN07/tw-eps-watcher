@@ -82,10 +82,44 @@ def upsert_batch(table, rows, batch_size=500):
         supabase.table(table).upsert(rows[i:i + batch_size]).execute()
 
 
+# 各估值模型的 (便宜價欄位, 合理價欄位, 狀態欄位)
+STATUS_MODELS = [
+    ("cheap_price",      "fair_price",      "status"),
+    ("pb_cheap_price",   "pb_fair_price",   "pb_status"),
+    ("ps_cheap_price",   "ps_fair_price",   "ps_status"),
+    ("pfcf_cheap_price", "pfcf_fair_price", "pfcf_status"),
+    ("yield_cheap_price","yield_fair_price","yield_status"),
+]
+
+_STATUS_COLS = "stock_id," + ",".join(
+    col for model in STATUS_MODELS for col in model[:2]
+)
+
+
+def judge_status(price: float, cheap, fair) -> str:
+    """
+    以現價比對「已算好的」目標價，判定便宜/合理/昂貴。
+
+    刻意不重算「基準值 × 倍數」：calculate_valuation.py 在 TTM EPS 失真時
+    會改用常態化 EPS 當基準，此處若自行重算會得出不同答案並覆蓋掉正確結果。
+    目標價本身即為單一真相來源。
+
+    非正數目標價代表基準值為負（如虧損股），該模型不適用；
+    此處主動擋掉，避免尚未重算的舊資料被誤判為「昂貴」。
+    """
+    if cheap is None or fair is None or cheap <= 0 or fair <= 0:
+        return "無法計算"
+    if price <= cheap:
+        return "便宜"
+    if price <= fair:
+        return "合理"
+    return "昂貴"
+
+
 def update_valuations(prices: dict[str, float]):
     """
-    快速更新估值現價與狀態。
-    從 valuations 讀出既有 P/E 區間，搭配新收盤價重判便宜/合理/昂貴。
+    快速更新估值現價與狀態（P/E + P/B + P/S + P/FCF + 殖利率）。
+    只比對現價與既有目標價，不重算歷史區間（那是 calculate_valuation.py 的職責）。
     """
     sids = list(prices.keys())
     existing = []
@@ -93,29 +127,22 @@ def update_valuations(prices: dict[str, float]):
     for i in range(0, len(sids), 100):
         batch = sids[i:i + 100]
         resp = (supabase.table("valuations")
-                .select("stock_id,ttm_eps,cheap_pe,fair_pe,expensive_pe")
+                .select(_STATUS_COLS)
                 .in_("stock_id", batch).execute())
         existing.extend(resp.data)
 
     updates = []
     for row in existing:
-        sid       = row["stock_id"]
-        price     = prices.get(sid)
-        ttm_eps   = row.get("ttm_eps") or 0
-        cheap_pe  = row.get("cheap_pe") or 0
-        fair_pe   = row.get("fair_pe") or 0
-
-        if not price or ttm_eps <= 0:
+        sid   = row["stock_id"]
+        price = prices.get(sid)
+        if not price or price <= 0:
             continue
 
-        if price <= ttm_eps * cheap_pe:
-            status = "便宜"
-        elif price <= ttm_eps * fair_pe:
-            status = "合理"
-        else:
-            status = "昂貴"
-
-        updates.append({"stock_id": sid, "current_price": round(price, 2), "status": status})
+        # 現價一律更新（含虧損股），各模型狀態依其目標價各自判定
+        update = {"stock_id": sid, "current_price": round(price, 2)}
+        for cheap_col, fair_col, status_col in STATUS_MODELS:
+            update[status_col] = judge_status(price, row.get(cheap_col), row.get(fair_col))
+        updates.append(update)
 
     upsert_batch("valuations", updates)
     print(f"估值狀態更新：{len(updates)} 支")

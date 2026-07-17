@@ -13,9 +13,9 @@ interface Valuation {
   cheap_pe: number
   fair_pe: number
   expensive_pe: number
-  cheap_price: number
-  fair_price: number
-  expensive_price: number
+  cheap_price: number | null
+  fair_price: number | null
+  expensive_price: number | null
   current_price: number
   status: string
   warning?: string | null
@@ -109,7 +109,7 @@ function toQuarterLabel(dateStr: string): string {
 }
 
 function hasModel(v: Valuation, m: Model): boolean {
-  if (m === 'pe') return true
+  if (m === 'pe')    return !!(v.status       && v.status       !== '無法計算' && v.cheap_price       != null)
   if (m === 'pb')    return !!(v.pb_status    && v.pb_status    !== '無法計算' && v.pb_cheap_price    != null)
   if (m === 'ps')    return !!(v.ps_status    && v.ps_status    !== '無法計算' && v.ps_cheap_price    != null)
   if (m === 'pfcf')  return !!(v.pfcf_status  && v.pfcf_status  !== '無法計算' && v.pfcf_cheap_price  != null)
@@ -367,7 +367,7 @@ export default function ValuationCard({
 function PriceLevel({
   label, price, ratio, color, ratioLabel, ratioSuffix = '',
 }: {
-  label: string; price: number; ratio: number; color: string; ratioLabel: string; ratioSuffix?: string
+  label: string; price: number | null; ratio: number; color: string; ratioLabel: string; ratioSuffix?: string
 }) {
   return (
     <div className="bg-white/70 rounded-xl px-3 py-2 text-center">
