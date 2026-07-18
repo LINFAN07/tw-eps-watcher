@@ -45,6 +45,17 @@ jobs:
         working-directory: scripts
         run: python quarterly_eps_update.py
 
+      # 金控/保險/證券期貨業的 EPS 在 FinMind 更新較慢，每年 Q1 常缺（2026-07 曾 13 家金控全缺）。
+      # 用交易所綜合損益表 OpenAPI 補上官方基本每股盈餘。只在 Q1 財報季（5 月那條 cron）或手動觸發時跑，
+      # 因綜合損益表僅 Q1 累計＝單季可安全採用（Q2~Q4 無法還原單季，仍靠上一步的 FinMind）。
+      - name: 補金控/保險 Q1 EPS（交易所損益表）
+        if: github.event.schedule == '0 7 * 5 1' || github.event_name == 'workflow_dispatch'
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        working-directory: scripts
+        run: python backfill_eps_from_income.py
+
       - name: 排程失敗 Email 通知
         if: failure()
         uses: dawidd6/action-send-mail@v3
