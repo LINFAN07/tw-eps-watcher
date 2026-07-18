@@ -53,16 +53,9 @@ jobs:
       - name: 安裝套件
         run: pip install requests supabase python-dotenv pandas numpy
 
-      # 除權息還原：股利是唯一會改變還原價的輸入，故只在此重建 adjusted_close。
-      # 必須在兩個重算之前，讓 P/E 與 P/B/P/S/P/FCF 的歷史帶都吃到新的還原價。
-      - name: 重建除權息還原股價（adjusted_close）
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scripts/compute_adjusted_prices.py
-
-      # 還原價改變後，P/E 歷史分布也隨之改變，故股利更新亦須重算 P/E（過去只重算替代模型）
-      - name: 重算 P/E 估值（吃新的還原價）
+      # 除權息還原改為即時計算（不儲存）：股利改變 → 兩個重算會即時用新股利還原歷史帶。
+      # 因還原價現在也影響 P/E，故股利更新亦須重算 P/E（過去只重算替代模型，是漏洞）。
+      - name: 重算 P/E 估值（即時還原吃新股利）
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}

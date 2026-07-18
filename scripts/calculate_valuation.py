@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 import pandas as pd
 import numpy as np
+from price_adjust import back_adjust   # 除權息即時還原（不儲存，見 price_adjust.py）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -59,18 +60,28 @@ def fetch_eps(stock_id: str) -> pd.DataFrame:
     return df
 
 
+def fetch_dividends(stock_id: str) -> list[tuple[str, float]]:
+    """該股現金股利 (除息日, 每股股利)，供即時還原用"""
+    rows = _fetch_paged("dividends", {"stock_id": stock_id}, "ex_date,cash_dividend")
+    return [(r["ex_date"], float(r["cash_dividend"]))
+            for r in rows if r.get("cash_dividend") is not None]
+
+
 def fetch_prices(stock_id: str) -> pd.DataFrame:
-    rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price,adjusted_close")
+    rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price")
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df["date"]        = pd.to_datetime(df["date"])
     df["close_price"] = pd.to_numeric(df["close_price"])
-    # adj_price：除權息還原價（衍生），供歷史 P/E 分布使用；null（無配息或尚未計算）
-    # 回退原始價。現價仍取原始 close_price（見 calculate_valuation 的 current_price）。
-    df["adj_price"]   = (pd.to_numeric(df["adjusted_close"], errors="coerce").fillna(df["close_price"])
-                         if "adjusted_close" in df.columns else df["close_price"])
-    return df.sort_values("date")
+    df = df.sort_values("date").reset_index(drop=True)
+    # adj_price：除權息即時還原（不儲存），供歷史 P/E 分布使用，避免除息機械性
+    # 下跌被當成估值變化。ISO 日期字串字典序即時間序，可直接餵 back_adjust。
+    # 現價仍取原始 close_price（見 calculate_valuation 的 current_price）。
+    df["adj_price"] = back_adjust(df["date"].astype(str).tolist(),
+                                  df["close_price"].tolist(),
+                                  fetch_dividends(stock_id))
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
 
 def _eps_window(eps_df: pd.DataFrame) -> int:

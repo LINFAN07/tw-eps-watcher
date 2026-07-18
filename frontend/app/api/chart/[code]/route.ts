@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
+import { adjustedMap } from '@/lib/priceAdjust'
 
 // 取得一支股票的所有日收盤價（自動分頁，繞過 Supabase 1000 筆上限）
 // 中途任一頁失敗即拋出錯誤，避免靜默回傳截斷的不完整資料
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
-  const all: { date: string; close_price: number; adjusted_close: number | null }[] = []
+  const all: { date: string; close_price: number }[] = []
   let offset = 0
   while (true) {
     const { data, error } = await db.from('daily_prices')
-      .select('date,close_price,adjusted_close')
+      .select('date,close_price')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
@@ -53,6 +54,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   } catch (e) {
     return NextResponse.json({ error: '價格資料載入失敗' }, { status: 500 })
   }
+  // 除權息即時還原：用全日序列（升冪）+ 股利算「日期→還原價」，再月採樣
+  const { data: divRows } = await db.from('dividends')
+    .select('ex_date,cash_dividend').eq('stock_id', code)
+  const exList: [string, number][] = (divRows ?? []).map(d => [d.ex_date, Number(d.cash_dividend)])
+  const adjMap = adjustedMap(prices, exList)
+
   const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
   const sampled = Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date))
@@ -65,9 +72,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     if (!ttm) return null
     return {
       date: p.date,
-      // 河流圖價格線用還原價（與還原後的估值帶一致）；null 回退原始價。
-      // 最新一日還原價==原始價，故現價顯示不受影響。
-      price: Number(p.adjusted_close ?? p.close_price),
+      // 河流圖價格線用還原價（與還原後的估值帶一致）。最新一日還原價==原始價，
+      // 故現價顯示不受影響；查無還原值時回退原始價。
+      price: adjMap[p.date] ?? Number(p.close_price),
       cheap: +(ttm * Number(val.cheap_pe)).toFixed(2),
       fair: +(ttm * Number(val.fair_pe)).toFixed(2),
       expensive: +(ttm * Number(val.expensive_pe)).toFixed(2),

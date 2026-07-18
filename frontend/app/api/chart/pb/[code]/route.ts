@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
+import { adjustedMap } from '@/lib/priceAdjust'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
-  const all: { date: string; close_price: number; adjusted_close: number | null }[] = []
+  const all: { date: string; close_price: number }[] = []
   let offset = 0
   while (true) {
     const { data, error } = await db.from('daily_prices')
-      .select('date,close_price,adjusted_close')
+      .select('date,close_price')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
@@ -50,6 +51,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   }
 
   // 取每月最後一筆收盤價（月採樣，約 120 個資料點）
+  // 除權息即時還原：用全日序列 + 股利算「日期→還原價」
+  const { data: divRows } = await db.from('dividends')
+    .select('ex_date,cash_dividend').eq('stock_id', code)
+  const exList: [string, number][] = (divRows ?? []).map(d => [d.ex_date, Number(d.cash_dividend)])
+  const adjMap = adjustedMap(prices, exList)
+
   const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
   const sampled = Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date))
@@ -63,7 +70,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     if (!bvps || bvps <= 0) return null
     return {
       date:      p.date,
-      price:     Number(p.adjusted_close ?? p.close_price),   // 河流圖用還原價（回退原始）
+      price:     adjMap[p.date] ?? Number(p.close_price),   // 河流圖用還原價（回退原始）
       cheap:     +(bvps * Number(val.pb_cheap_pb)).toFixed(2),
       fair:      +(bvps * Number(val.pb_fair_pb)).toFixed(2),
       expensive: +(bvps * Number(val.pb_expensive_pb)).toFixed(2),

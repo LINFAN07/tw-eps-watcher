@@ -212,20 +212,14 @@ ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS capital_change_warning TEXT;
 
 -- ─────────────────────────────────────────────────────────
--- 除權息還原股價（2026-07-18）
+-- 除權息還原：改採「即時計算、不儲存」（2026-07-18）
 --
--- 動機：close_price 為原始收盤價，除權息當天的機械性下跌被 P/E、P/B 河流圖
--- 當成基本面訊號，對高殖利率股（金融/傳產）估值帶造成長期偏移（實測長榮75%、
--- 台塑59%、國泰金25%，台積電僅5%）。FinMind 還原股價為付費資料集，故以自有
--- dividends 表自建「後向還原序列」。
+-- 原本規劃把後向還原價存進 daily_prices.adjusted_close，但實測那會使更新膨脹，
+-- 免費層 500MB 容不下（更新約 200 萬列會暫時多出 ~160MB、永久 +16MB 逼近上限）。
+-- 改為在 calculate_valuation / calculate_alt_valuations 與前端河流圖 API 用手上的
+-- dividends 即時還原（見 scripts/price_adjust.py 與 frontend/lib/priceAdjust.ts），
+-- 零儲存、零膨脹。故此處【不建】adjusted_close 欄位。
 --
--- adjusted_close 是【衍生值】，由原始 close_price + dividends 兩個來源計算而得，
--- 刻意與原始 close_price 分欄存放，絕不覆蓋——原始收盤價才是真實可成交價格，
--- 守「不得以另一個指標頂替」原則。compute_adjusted_prices.py 產生；後向還原
--- 錨定於今日，故 adjusted_close 最新一日 == close_price 最新一日，現價與現值不變，
--- 只有歷史分布還原。查詢端一律 COALESCE(adjusted_close, close_price)：
--- 尚未計算或無配息者天然回退為原始價。
+-- 若先前已建過該欄（全為 null、無害），可選擇性移除：
+--   ALTER TABLE daily_prices DROP COLUMN IF EXISTS adjusted_close;
 -- ─────────────────────────────────────────────────────────
-
-ALTER TABLE daily_prices
-  ADD COLUMN IF NOT EXISTS adjusted_close DECIMAL(10, 2);   -- 後向還原收盤價（衍生值）
