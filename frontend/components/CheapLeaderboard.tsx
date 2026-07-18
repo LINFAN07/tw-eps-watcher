@@ -10,7 +10,7 @@ async function fetchModel(
 ): Promise<LeaderboardRow[]> {
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
-  const peExtra   = model === 'pe' ? ',warning,nonop_warning' : ''
+  const peExtra   = model === 'pe' ? ',pe_reliable,warning,nonop_warning' : ''
   const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra},stocks(name,industry,market)`
 
   // 排序鍵（現價 ÷ 便宜價）是計算值，資料庫無法排序，必須取回完整候選再排。
@@ -34,6 +34,7 @@ async function fetchModel(
     stock_id:         r.stock_id as string,
     current_price:    Number(r.current_price),
     cheap_price:      Number(r[priceCol]),
+    pe_reliable:      (r.pe_reliable as boolean | null) ?? null,
     warning:          (r.warning as string | null) ?? null,
     nonop_warning:    (r.nonop_warning as string | null) ?? null,
     ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
@@ -54,7 +55,7 @@ async function fetchModel(
 async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<LeaderboardRow[]> {
   const fields = [
     'stock_id', 'current_price',
-    'status', 'cheap_price', 'warning', 'nonop_warning',
+    'status', 'cheap_price', 'pe_reliable', 'warning', 'nonop_warning',
     'pb_status', 'pb_cheap_price',
     'ps_status', 'ps_cheap_price',
     'pfcf_status', 'pfcf_cheap_price',
@@ -84,7 +85,11 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     // P/E 需額外排除不可靠警告（獲利高峰／長期偏低／業外虛胖）
     const peValid = r.status === '便宜'
       && r.cheap_price != null
-      && !isPeUnreliable({ warning, nonop_warning: r.nonop_warning as string | null })
+      && !isPeUnreliable({
+        pe_reliable:   r.pe_reliable as boolean | null,
+        warning,
+        nonop_warning: r.nonop_warning as string | null,
+      })
 
     const models: string[] = []
     if (peValid)                                                    models.push('P/E')

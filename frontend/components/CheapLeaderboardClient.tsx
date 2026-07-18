@@ -6,6 +6,7 @@ export interface LeaderboardRow {
   stock_id: string
   current_price: number
   cheap_price: number
+  pe_reliable?: boolean | null
   warning?: string | null
   nonop_warning?: string | null
   ttm_eps?: number | null

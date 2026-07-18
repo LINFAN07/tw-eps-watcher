@@ -212,6 +212,27 @@ ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS capital_change_warning TEXT;
 
 -- ─────────────────────────────────────────────────────────
+-- P/E 可靠性旗標（2026-07-18）
+--
+-- 「推薦模型」與「便宜排行榜」都需要判斷「這支股票的 P/E 是否失真」。
+-- 判斷本身是字串比對（warning 含「EPS 長期偏低」「顯著高於長期均值」或有 nonop_warning）。
+-- 過去這段比對散在前端 TS，與後端寫入的中文字串跨語言耦合：後端一改用詞，
+-- 前端就靜默失效。改用「生成欄位」把這唯一的判斷邏輯收斂到資料庫一處：
+--   - warning / nonop_warning 每次寫入時，DB 自動重算 pe_reliable，
+--     不需任何重算腳本、不需回填、不需掛進排程（避開「重算漏掛排程」那類事故）。
+--   - 前端只讀這個布林值，不再持有字串常數。
+-- 註：ALTER 當下 Postgres 會為既有列即時計算，無 null。
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS pe_reliable BOOLEAN
+  GENERATED ALWAYS AS (
+    nonop_warning IS NULL
+    AND (
+      warning IS NULL
+      OR (warning NOT LIKE '%EPS 長期偏低%' AND warning NOT LIKE '%顯著高於長期均值%')
+    )
+  ) STORED;
+
+-- ─────────────────────────────────────────────────────────
 -- 除權息還原：改採「即時計算、不儲存」（2026-07-18）
 --
 -- 原本規劃把後向還原價存進 daily_prices.adjusted_close，但實測那會使更新膨脹，
