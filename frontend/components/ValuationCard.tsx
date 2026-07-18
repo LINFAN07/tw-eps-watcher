@@ -144,16 +144,42 @@ function getModelStatus(v: Valuation, m: Model): string {
   return v.yield_status ?? '未知'
 }
 
+// 各項資料的實際基準日期。顯示這個而非寫入時間戳，
+// 使用者才能自行判斷資料新鮮度（排程延遲、來源落後都看得出來）。
+type AsOf = {
+  price?: string | null   // 股價：收盤日
+  pe?: string | null      // P/E：EPS 最新季度
+  pb?: string | null      // P/B：淨值最新季度
+  ps?: string | null      // P/S：月營收最新月份
+  pfcf?: string | null    // P/FCF：現金流最新季度
+  yield?: string | null   // 殖利率：最近除息日
+}
+
+// "2026-03-31" → "2026 Q1"
+function fmtQuarter(iso: string): string {
+  return `${iso.slice(0, 4)} Q${Math.ceil(+iso.slice(5, 7) / 3)}`
+}
+// "2026-06-01" → "2026/06"
+function fmtMonth(iso: string): string {
+  return `${iso.slice(0, 4)}/${iso.slice(5, 7)}`
+}
+// "2026-07-17" → "2026/07/17"
+function fmtDay(iso: string): string {
+  return iso.slice(0, 10).replace(/-/g, '/')
+}
+
 export default function ValuationCard({
   v,
   ttmQuarters = [],
   prevYearQuarters = [],
   industry,
+  asOf = {},
 }: {
   v: Valuation
   ttmQuarters?: EpsQuarter[]
   prevYearQuarters?: EpsQuarter[]
   industry?: string | null
+  asOf?: AsOf
 }) {
   const recommended = getRecommendedModel(industry, v)
   const [active, setActive] = useState<Model>(recommended)
@@ -168,7 +194,14 @@ export default function ValuationCard({
       ? (v.current_price / v.normalized_eps!).toFixed(1)
       : '—'
 
-  const updated = v.updated_at ? new Date(v.updated_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '—'
+  // 當前模型基準資料的實際日期（季報→「2026 Q1」、月營收→「2026/06」、股利→除息日）
+  const basisAsOf = (() => {
+    if (active === 'pe')   return asOf.pe   ? fmtQuarter(asOf.pe)  : null
+    if (active === 'pb')   return asOf.pb   ? fmtQuarter(asOf.pb)  : null
+    if (active === 'ps')   return asOf.ps   ? fmtMonth(asOf.ps)    : null
+    if (active === 'pfcf') return asOf.pfcf ? fmtQuarter(asOf.pfcf): null
+    return asOf.yield ? `${fmtDay(asOf.yield)} 除息` : null
+  })()
 
   // ROE = TTM EPS ÷ 每股淨值（每股基礎，單位抵銷）
   const roe = (v.ttm_eps > 0 && v.pb_book_value != null && v.pb_book_value > 0)
@@ -211,7 +244,10 @@ export default function ValuationCard({
       {/* 現價 + 狀態標籤 */}
       <div className="flex items-start justify-between mb-4">
         <div>
-          <p className="text-sm text-gray-500 mb-1">現價</p>
+          <p className="text-sm text-gray-500 mb-1">
+            現價
+            {asOf.price && <span className="text-xs text-gray-400 ml-1.5">{fmtDay(asOf.price)} 收盤</span>}
+          </p>
           <p className="text-4xl font-bold text-gray-900">{v.current_price ?? '—'}</p>
         </div>
         <span className={`px-3 py-1 rounded-full text-sm font-semibold ${style.text}`}>
@@ -311,7 +347,11 @@ export default function ValuationCard({
         {active === 'yield' && v.yield_ttm_div != null && (
           <span>TTM 現金股利 <strong className="text-gray-800 ml-1">{v.yield_ttm_div} 元</strong></span>
         )}
-        <span className="basis-full text-xs text-gray-400 mt-1">更新：{updated}</span>
+        {basisAsOf && (
+          <span className="basis-full text-xs text-gray-400 mt-1">
+            估值基準資料截至 {basisAsOf}
+          </span>
+        )}
       </div>
 
       {/* 品質指標列（固定顯示，不隨 Tab 切換）*/}

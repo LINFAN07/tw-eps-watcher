@@ -14,14 +14,30 @@ export async function generateMetadata({ params }: Props) {
   return { title: `${code} 估值查詢 | 台股估值` }
 }
 
+// 取某張表某支股票的「最新一筆日期」，用來標示各項資料的實際基準日。
+// 單股 + order + limit(1) 走主鍵前綴，很快。
+async function latestDate(
+  db: ReturnType<typeof getSupabase>, table: string, dateCol: string, code: string,
+): Promise<string | null> {
+  const { data } = await db.from(table).select(dateCol)
+    .eq('stock_id', code).order(dateCol, { ascending: false }).limit(1).single()
+  return (data as Record<string, string> | null)?.[dateCol] ?? null
+}
+
 async function fetchStock(code: string) {
   const db = getSupabase()
-  const [stockRes, valRes, epsRes] = await Promise.all([
+  const [stockRes, valRes, epsRes, priceDate, pbDate, psDate, pfcfDate, yieldDate] = await Promise.all([
     db.from('stocks').select('stock_id,name,market,industry,listed_shares').eq('stock_id', code).single(),
     db.from('valuations').select('*').eq('stock_id', code).single(),
     // 取最近 8 季：前 4 季組成 TTM，後 4 季用來比較去年同期趨勢
     db.from('eps_quarterly').select('quarter_end_date,eps')
       .eq('stock_id', code).order('quarter_end_date', { ascending: false }).limit(8),
+    // 各項資料的實際基準日期（顯示在網站上，避免用寫入時間誤導使用者）
+    latestDate(db, 'daily_prices', 'date', code),
+    latestDate(db, 'balance_sheet_quarterly', 'quarter_end_date', code),
+    latestDate(db, 'monthly_revenue', 'year_month', code),
+    latestDate(db, 'cash_flows_quarterly', 'quarter_end_date', code),
+    latestDate(db, 'dividends', 'ex_date', code),
   ])
   const eps8 = epsRes.data ?? []
   return {
@@ -29,6 +45,14 @@ async function fetchStock(code: string) {
     valuation: valRes.data,
     ttmQuarters: eps8.slice(0, 4),
     prevYearQuarters: eps8.slice(4, 8),
+    asOf: {
+      price: priceDate,
+      pe:    eps8[0]?.quarter_end_date ?? null,
+      pb:    pbDate,
+      ps:    psDate,
+      pfcf:  pfcfDate,
+      yield: yieldDate,
+    },
   }
 }
 
@@ -42,7 +66,7 @@ const statusStyle: Record<string, string> = {
 
 export default async function StockPage({ params }: Props) {
   const { code } = await params
-  const { stock, valuation, ttmQuarters, prevYearQuarters } = await fetchStock(code)
+  const { stock, valuation, ttmQuarters, prevYearQuarters, asOf } = await fetchStock(code)
 
   if (!stock) notFound()
 
@@ -82,7 +106,7 @@ export default async function StockPage({ params }: Props) {
       {/* 估值卡片 */}
       {valuation ? (
         <div className="mb-8">
-          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} />
+          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} asOf={asOf} />
         </div>
       ) : (
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border text-gray-400 text-center">
