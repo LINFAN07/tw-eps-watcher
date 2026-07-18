@@ -88,12 +88,17 @@ def fetch_all_stocks() -> list[dict]:
 
 
 def fetch_prices(stock_id: str) -> pd.DataFrame:
-    rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price")
+    rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price,adjusted_close")
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     df["date"]        = df["date"].astype(str)
     df["close_price"] = pd.to_numeric(df["close_price"])
+    # adj_price：除權息還原價（衍生），供 P/B / P/S / P/FCF 的「歷史倍數分布」使用，
+    # 避免除息機械性下跌被當成估值變化。null（無配息或尚未計算）時回退原始價。
+    # 現價與殖利率一律用原始 close_price（見各 calculate_* 與 current_price）。
+    df["adj_price"]   = (pd.to_numeric(df["adjusted_close"], errors="coerce").fillna(df["close_price"])
+                         if "adjusted_close" in df.columns else df["close_price"])
     return df.sort_values("date").reset_index(drop=True)
 
 
@@ -163,7 +168,7 @@ def calculate_pb(stock_id: str, price_df: pd.DataFrame, current_price: float) ->
         nearby = price_df[price_df["date"] <= q_date]
         if nearby.empty:
             continue
-        price = float(nearby.iloc[-1]["close_price"])
+        price = float(nearby.iloc[-1]["adj_price"])   # 歷史 P/B 分布用還原價
         pb    = price / bvps
         if PB_MIN <= pb <= PB_MAX:
             pb_series.append(pb)
@@ -228,9 +233,9 @@ def calculate_ps(stock_id: str, price_df: pd.DataFrame, current_price: float, li
             nearby = price_df[price_df["date"] <= rev_df.iloc[i]["year_month"]]
             if nearby.empty:
                 continue
-            price = float(nearby.iloc[-1]["close_price"])
+            price = float(nearby.iloc[-1]["adj_price"])   # 歷史 P/S 分布用還原價
         else:
-            price = float(month_prices.iloc[-1]["close_price"])
+            price = float(month_prices.iloc[-1]["adj_price"])
 
         ps = price / rps
         if PS_MIN <= ps <= PS_MAX:
@@ -302,7 +307,7 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
         nearby = price_df[price_df["date"] <= q_date]
         if nearby.empty:
             continue
-        price = float(nearby.iloc[-1]["close_price"])
+        price = float(nearby.iloc[-1]["adj_price"])   # 歷史 P/FCF 分布用還原價
 
         pfcf = price / fcf_ps
         if PFCF_MIN <= pfcf <= PFCF_MAX:

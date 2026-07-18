@@ -5,11 +5,11 @@ import { getSupabase } from '@/lib/supabase'
 // 取得一支股票的所有日收盤價（自動分頁，繞過 Supabase 1000 筆上限）
 // 中途任一頁失敗即拋出錯誤，避免靜默回傳截斷的不完整資料
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
-  const all: { date: string; close_price: number }[] = []
+  const all: { date: string; close_price: number; adjusted_close: number | null }[] = []
   let offset = 0
   while (true) {
     const { data, error } = await db.from('daily_prices')
-      .select('date,close_price')
+      .select('date,close_price,adjusted_close')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
@@ -65,7 +65,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     if (!ttm) return null
     return {
       date: p.date,
-      price: Number(p.close_price),
+      // 河流圖價格線用還原價（與還原後的估值帶一致）；null 回退原始價。
+      // 最新一日還原價==原始價，故現價顯示不受影響。
+      price: Number(p.adjusted_close ?? p.close_price),
       cheap: +(ttm * Number(val.cheap_pe)).toFixed(2),
       fair: +(ttm * Number(val.fair_pe)).toFixed(2),
       expensive: +(ttm * Number(val.expensive_pe)).toFixed(2),

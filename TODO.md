@@ -112,13 +112,23 @@
     ④ 掛進 `quarterly_fundamentals.yml` 重算 job。⑤ 前端 ValuationCard 藍色 🔀 徽章。
   - **啟用步驟**：(1) Supabase 執行 schema.sql 新增兩欄；(2) 跑一次 `download_balance_sheet.py`
     回填逐季股本；(3) 跑 `patch_capital_change_warning.py`（之後每季排程自動執行）。
-- [ ] **F. 除權息還原歷史股價** — 影響面已評估（2026-07-18）。
-  - **實測**：近10年累積現金股利/現價 = 長榮 75%、台塑 59%、國泰金 25%、台積電僅 5%。
-    對高殖利率股（P/B 主打的金融/傳產）造成歷史估值帶高估數十個百分點，屬實質偏差。
-  - **路徑限制**：FinMind 還原股價（TaiwanStockPriceAdj）為**付費資料集**，免費帳號被擋。
-    免費做法只能用自有 `dividends` 表自建「後向還原序列」重畫河流圖。
-  - **待你決策**：(a) 用自有股利自建還原序列（工程大、改動全站歷史帶）；
-    (b) 維持原始價，只在高殖利率股標註「未還原除權息」；(c) 付費升級 FinMind。
+- [x] **F. 除權息還原歷史股價**（走 A：自有股利自建後向還原）（2026-07-18 建置完成，待部署啟用）
+  - 動機實測：高殖利率股歷史帶偏移巨大（長榮 −66%、台塑 −36%、國泰金 −35%、台積電 −22%）。
+    FinMind 還原股價為付費，故以自有 `dividends` 自建後向還原序列。
+  - ① `schema.sql`：`daily_prices` 加衍生欄 `adjusted_close`（不覆蓋原始價）。
+    ② `compute_adjusted_prices.py`：後向還原（錨定今日→最新日==原始，自檢過關），
+    純函式已單元測試 + 真實資料唯讀驗證。③ 後端 `calculate_valuation` 與
+    `calculate_alt_valuations` 的 P/E、P/B、P/S、P/FCF 歷史分布改用還原價（現價仍原始；
+    **殖利率仍用原始**，因殖利率本質是實際價 vs 股利）。④ 四條河流圖 API 價格線改畫還原價
+    （`adjusted_close ?? close_price`，最新日==原始故現價不變）。⑤ `dividends_update.yml`
+    重建 adjusted_close 後連 P/E 一起重算（原本只重算替代模型，是自動更新漏洞，已補）。
+  - **部署硬約束**：`schema.sql` 的 `ADD COLUMN IF NOT EXISTS adjusted_close` 必須在
+    程式部署前先跑（前端圖表 API 會明確 select 該欄；欄位不存在會 500）。加欄向後相容，
+    現行程式不受影響。加欄後在 compute+重算前，adjusted_close 全為 null → 全站回退原始價，
+    行為與現況完全一致，可安心漸進啟用。
+  - **啟用步驟**：(1) Supabase 執行 schema.sql 新增 adjusted_close；(2) 部署程式；
+    (3) 跑 `compute_adjusted_prices.py`；(4) 跑 `calculate_valuation.py` +
+    `calculate_alt_valuations.py` 全庫重算。之後 `dividends_update`（7/9 月）自動維護。
 - [x] **G. Supabase 免費方案容量/休眠監控**（2026-07-18 完成）
   - **防休眠**：`data_health.yml` 每日查詢 Supabase，天然重置 7 天閒置計時器，無需額外程式。
   - **容量**：`schema.sql` 新增 `db_size_mb()`（`pg_database_size`，免 Management API token），

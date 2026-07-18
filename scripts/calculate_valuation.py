@@ -60,11 +60,16 @@ def fetch_eps(stock_id: str) -> pd.DataFrame:
 
 
 def fetch_prices(stock_id: str) -> pd.DataFrame:
-    rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price")
+    rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price,adjusted_close")
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"]        = pd.to_datetime(df["date"])
+    df["close_price"] = pd.to_numeric(df["close_price"])
+    # adj_price：除權息還原價（衍生），供歷史 P/E 分布使用；null（無配息或尚未計算）
+    # 回退原始價。現價仍取原始 close_price（見 calculate_valuation 的 current_price）。
+    df["adj_price"]   = (pd.to_numeric(df["adjusted_close"], errors="coerce").fillna(df["close_price"])
+                         if "adjusted_close" in df.columns else df["close_price"])
     return df.sort_values("date")
 
 
@@ -88,7 +93,7 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFram
     )
     merged = merged.dropna(subset=["ttm_eps"])
     merged = merged[merged["ttm_eps"] > 0].copy()
-    merged["pe"] = merged["close_price"] / merged["ttm_eps"]
+    merged["pe"] = merged["adj_price"] / merged["ttm_eps"]   # 歷史 P/E 分布用還原價
     return merged[(merged["pe"] >= PE_MIN) & (merged["pe"] <= PE_MAX)]
 
 
