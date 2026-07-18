@@ -121,7 +121,7 @@ function getRecommendedModel(industry: string | null | undefined, v: Valuation):
   const ind = industry ?? ''
   // 金融業 + 景氣循環股 + 資產重型（營建）→ P/B 定錨最穩
   // 營建股獲利依完工認列、忽高忽低，P/E 天生失真，須用淨值定錨
-  if (/銀行|保險|證券|金融|航運|鋼鐵|水泥|面板|造紙|玻璃|塑膠|建材營造/.test(ind)) {
+  if (/銀行|保險|證券|金融|航運|鋼鐵|水泥|光電|造紙|玻璃|塑膠|建材營造/.test(ind)) {
     if (hasModel(v, 'pb')) return 'pb'
   }
   // 虧損股 → P/S（FCF 也常為負，P/E 無意義）
