@@ -1,8 +1,6 @@
 import { getSupabase } from '@/lib/supabase'
+import { isPeUnreliable } from '@/lib/peReliability'
 import CheapLeaderboardClient, { type LeaderboardRow, type LeaderboardData } from './CheapLeaderboardClient'
-
-// P/E 特有：這兩種警告代表估值模型失真，不應出現在 P/E 排行榜
-const UNRELIABLE_WARNINGS = ['EPS 長期偏低', '顯著高於長期均值']
 
 const PAGE = 1000
 
@@ -45,9 +43,7 @@ async function fetchModel(
   }))
 
   if (model === 'pe') {
-    rows = rows
-      .filter(r => !r.warning || !UNRELIABLE_WARNINGS.some(kw => r.warning!.includes(kw)))
-      .filter(r => !r.nonop_warning)
+    rows = rows.filter(r => !isPeUnreliable(r))
   }
 
   return rows
@@ -85,11 +81,10 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
   for (const r of all) {
     const warning = (r.warning as string | null) ?? null
 
-    // P/E 需額外排除不可靠警告
+    // P/E 需額外排除不可靠警告（獲利高峰／長期偏低／業外虛胖）
     const peValid = r.status === '便宜'
       && r.cheap_price != null
-      && !r.nonop_warning
-      && (!warning || !UNRELIABLE_WARNINGS.some(kw => warning.includes(kw)))
+      && !isPeUnreliable({ warning, nonop_warning: r.nonop_warning as string | null })
 
     const models: string[] = []
     if (peValid)                                                    models.push('P/E')

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { isPeUnreliable } from '@/lib/peReliability'
 
 interface EpsQuarter {
   quarter_end_date: string
@@ -131,8 +132,12 @@ function getRecommendedModel(industry: string | null | undefined, v: Valuation):
     if (hasModel(v, 'pfcf')) return 'pfcf'
     return 'pe'
   }
-  // 一般情況 fallback: P/E → P/B → P/S → P/FCF
-  for (const m of ['pe', 'pb', 'ps', 'pfcf'] as Model[]) {
+  // 一般情況：P/E 失真時（獲利高峰／長期偏低／業外虛胖）改優先其他模型，
+  // 與排行榜的 P/E 排除標準一致，避免詳情頁推薦系統自己都不信的 P/E
+  const order: Model[] = isPeUnreliable(v)
+    ? ['pb', 'ps', 'pfcf', 'pe']
+    : ['pe', 'pb', 'ps', 'pfcf']
+  for (const m of order) {
     if (hasModel(v, m)) return m
   }
   return 'pe'
