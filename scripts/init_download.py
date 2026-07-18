@@ -8,10 +8,10 @@ import os
 import sys
 import json
 import time
-import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from supabase import create_client
+import finmind_client as fm
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -20,29 +20,12 @@ FINMIND_TOKEN = os.getenv("FINMIND_TOKEN")
 SUPABASE_URL  = os.getenv("SUPABASE_URL")
 SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
-FINMIND_API   = "https://api.finmindtrade.com/api/v4/data"
 START_DATE    = (datetime.today() - timedelta(days=365 * 10)).strftime("%Y-%m-%d")
 CALL_INTERVAL = 6.5
 PROGRESS_FILE = os.path.join(os.path.dirname(__file__), "init_progress.json")
 EPS_TYPES     = {"EPS", "BasicEPS", "EPSTaxExcluded"}
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-def finmind_get(dataset, stock_id=None, start_date=None):
-    params = {"dataset": dataset, "token": FINMIND_TOKEN}
-    if stock_id:  params["data_id"]    = stock_id
-    if start_date: params["start_date"] = start_date
-    for attempt in range(3):
-        try:
-            data = requests.get(FINMIND_API, params=params, timeout=30).json()
-            if data.get("status") == 200:
-                return data.get("data", [])
-            print(f"  ⚠️  API 異常: {data.get('msg', '未知')}")
-        except Exception as e:
-            print(f"  ⚠️  請求失敗（第 {attempt + 1} 次）: {e}")
-        time.sleep(10)
-    return []
 
 
 def upsert_batch(table, rows, batch_size=500):
@@ -64,10 +47,9 @@ def save_progress(progress):
 
 def step1_download_stocks():
     print("=== 步驟 1：下載股票名冊 ===")
-    raw = finmind_get("TaiwanStockInfo")
-    if not raw:
-        print("❌ 無法取得股票名冊，請確認 FINMIND_TOKEN 是否正確")
-        return []
+    # 名冊抓不到就無事可做；fetch 失敗會拋 FinMindError 讓整個工作 exit 1，
+    # 不再用「回傳空清單」把故障偽裝成「沒有資料」。
+    raw = fm.fetch("TaiwanStockInfo", None, None, FINMIND_TOKEN)
 
     seen, stocks = set(), []
     for item in raw:
@@ -94,7 +76,8 @@ def _extract_price(sid, raw):
     return [{"stock_id": sid, "date": r["date"], "close_price": float(r["close"])}
             for r in raw if r.get("close") is not None and float(r["close"]) > 0]
 
-def _download_step(label, dataset, table, progress_key, stock_ids, progress, extract_fn):
+def _download_step(label, dataset, table, progress_key, stock_ids, progress,
+                   extract_fn, tracker):
     done      = set(progress[progress_key])
     remaining = [s for s in stock_ids if s not in done]
     total     = len(stock_ids)
@@ -103,7 +86,15 @@ def _download_step(label, dataset, table, progress_key, stock_ids, progress, ext
         print("✅ 跳過（已全數完成）")
         return
     for idx, sid in enumerate(remaining, 1):
-        rows = extract_fn(sid, finmind_get(dataset, sid, START_DATE))
+        # 抓取失敗只記錄該支、不寫進度，讓它下次重跑時重試；
+        # 絕不把故障當成空清單寫進去、並標記「已完成」而永久留下缺口。
+        try:
+            rows = extract_fn(sid, fm.fetch(dataset, sid, START_DATE, FINMIND_TOKEN))
+        except fm.FinMindError as e:
+            tracker.record(sid, e)
+            print(f"  [{len(done) + idx}/{total}] {sid}：抓取失敗，稍後重試")
+            time.sleep(CALL_INTERVAL)
+            continue
         upsert_batch(table, rows)
         progress[progress_key].append(sid)
         save_progress(progress)
@@ -120,8 +111,12 @@ if __name__ == "__main__":
     stock_ids = step1_download_stocks()
 
     if stock_ids:
+        # 單支失敗不中斷整批（避免數小時的下載因一次逾時全毀），
+        # 但收尾時 tracker.finish() 若有任何失敗就 exit 1，觸發排程通知。
+        tracker = fm.FailureTracker("初始下載")
         _download_step("步驟 2：下載季度 EPS", "TaiwanStockFinancialStatements",
-                       "eps_quarterly", "eps_done", stock_ids, progress, _extract_eps)
+                       "eps_quarterly", "eps_done", stock_ids, progress, _extract_eps, tracker)
         _download_step("步驟 3：下載日收盤價", "TaiwanStockPrice",
-                       "daily_prices", "prices_done", stock_ids, progress, _extract_price)
+                       "daily_prices", "prices_done", stock_ids, progress, _extract_price, tracker)
         print(f"\n全部完成！結束時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        tracker.finish()
