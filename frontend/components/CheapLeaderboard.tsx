@@ -25,7 +25,9 @@ async function fetchModel(
       .not(priceCol, 'is', null)
       .order('stock_id')   // 固定排序，確保跨頁不重複、不遺漏
       .range(offset, offset + PAGE - 1)
-    if (error || !page) return []
+    // 故障要拋出，不可吞成空清單：否則暫時性 DB 錯誤會偽裝成「沒有便宜股」
+    if (error) throw new Error(`排行榜查詢失敗（${model}）：${error.message}`)
+    if (!page) break
     data.push(...(page as unknown as Record<string, unknown>[]))
     if (page.length < PAGE) break
   }
@@ -72,7 +74,9 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
       .gt('current_price', 0)
       .order('stock_id')
       .range(offset, offset + PAGE - 1)
-    if (error || !page) break
+    // 故障要拋出，不可吞成空清單（同 fetchModel）
+    if (error) throw new Error(`共識排行榜查詢失敗：${error.message}`)
+    if (!page) break
     all.push(...(page as unknown as Record<string, unknown>[]))
     if (page.length < PAGE) break
   }
