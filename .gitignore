@@ -5,6 +5,9 @@
 # 下載進度記錄（本機暫存，不需版控）
 scripts/init_progress.json
 
+# 執行日誌（本機暫存，不需版控）
+logs/
+
 # Python
 __pycache__/
 *.pyc

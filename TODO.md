@@ -82,7 +82,8 @@
 
 ### 維運
 
-- [ ] 監控排程失敗的通知機制（Email 或 Telegram）
+- [x] 監控排程失敗的通知機制（Email）
+  - **實作**：六個 workflow 均設 `if: failure()` + `dawidd6/action-send-mail@v3`，失敗時寄信至 `qwert0708@hotmail.com`；`MAIL_PASSWORD` Secret 已設定
 - [x] 定期驗證估值計算結果是否合理（抽樣比對）
   - **實作**：`scripts/validate_valuations.py` 每週隨機抽樣 100 支股票，驗證價格順序（cheap < fair < expensive）、status 與現價一致性、倍數合理範圍，發現嚴重問題寄送 Email；搭配 `.github/workflows/weekly_validate.yml` 每週一 09:00 自動執行
 
