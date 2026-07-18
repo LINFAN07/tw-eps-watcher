@@ -3,11 +3,11 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
-  const all: { date: string; close_price: number }[] = []
+  const all: { date: string; close_price: number; adjusted_close: number | null }[] = []
   let offset = 0
   while (true) {
     const { data, error } = await db.from('daily_prices')
-      .select('date,close_price')
+      .select('date,close_price,adjusted_close')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
@@ -59,7 +59,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     return NextResponse.json({ error: '股價資料載入失敗' }, { status: 500 })
   }
 
-  const byMonth: Record<string, { date: string; close_price: number }> = {}
+  const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
 
   // 從第 12 筆起，每月計算 TTM 營收（前 12 個月合計）→ 計算帶狀價格
@@ -77,7 +77,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
 
     return {
       date:      pricePoint.date,
-      price:     Number(pricePoint.close_price),
+      price:     Number(pricePoint.adjusted_close ?? pricePoint.close_price),   // 河流圖用還原價（回退原始）
       cheap:     +(rps * Number(val.ps_cheap_ps)).toFixed(2),
       fair:      +(rps * Number(val.ps_fair_ps)).toFixed(2),
       expensive: +(rps * Number(val.ps_expensive_ps)).toFixed(2),

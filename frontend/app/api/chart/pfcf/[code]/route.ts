@@ -3,11 +3,11 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
-  const all: { date: string; close_price: number }[] = []
+  const all: { date: string; close_price: number; adjusted_close: number | null }[] = []
   let offset = 0
   while (true) {
     const { data, error } = await db.from('daily_prices')
-      .select('date,close_price')
+      .select('date,close_price,adjusted_close')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
@@ -113,7 +113,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     return NextResponse.json({ error: '股價資料載入失敗' }, { status: 500 })
   }
 
-  const byMonth: Record<string, { date: string; close_price: number }> = {}
+  const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
   const sampled = Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date))
 
@@ -125,7 +125,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     if (!fcfPs) return null
     return {
       date:      p.date,
-      price:     Number(p.close_price),
+      price:     Number(p.adjusted_close ?? p.close_price),   // 河流圖用還原價（回退原始）
       cheap:     +(fcfPs * Number(val.pfcf_cheap_pfcf)).toFixed(2),
       fair:      +(fcfPs * Number(val.pfcf_fair_pfcf)).toFixed(2),
       expensive: +(fcfPs * Number(val.pfcf_expensive_pfcf)).toFixed(2),

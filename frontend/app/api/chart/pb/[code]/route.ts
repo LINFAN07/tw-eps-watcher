@@ -3,11 +3,11 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
-  const all: { date: string; close_price: number }[] = []
+  const all: { date: string; close_price: number; adjusted_close: number | null }[] = []
   let offset = 0
   while (true) {
     const { data, error } = await db.from('daily_prices')
-      .select('date,close_price')
+      .select('date,close_price,adjusted_close')
       .eq('stock_id', stockId)
       .order('date')
       .range(offset, offset + 999)
@@ -50,7 +50,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   }
 
   // 取每月最後一筆收盤價（月採樣，約 120 個資料點）
-  const byMonth: Record<string, { date: string; close_price: number }> = {}
+  const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
   const sampled = Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date))
 
@@ -63,7 +63,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     if (!bvps || bvps <= 0) return null
     return {
       date:      p.date,
-      price:     Number(p.close_price),
+      price:     Number(p.adjusted_close ?? p.close_price),   // 河流圖用還原價（回退原始）
       cheap:     +(bvps * Number(val.pb_cheap_pb)).toFixed(2),
       fair:      +(bvps * Number(val.pb_fair_pb)).toFixed(2),
       expensive: +(bvps * Number(val.pb_expensive_pb)).toFixed(2),
