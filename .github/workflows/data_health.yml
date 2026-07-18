@@ -1,0 +1,52 @@
+name: 資料新鮮度看門狗
+
+on:
+  schedule:
+    # 台灣時間每日 16:30（UTC 08:30），在每日股價更新（14:30）之後。
+    # 刻意每日（含週末）執行：目的是偵測「排程靜默停擺 / cron 沒被觸發」，
+    # 因此不能只在交易日跑，否則排程整條死掉時也不會有人發現。
+    - cron: '30 8 * * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv
+
+      - name: 檢查資料是否跟上市場
+        env:
+          SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN:  ${{ secrets.FINMIND_TOKEN }}
+          # 死人開關（選用）：資料新鮮時 ping 此 URL；ping 停了由 healthchecks.io
+          # 從外部通知，補上「GitHub 排程整條死掉、連失敗信都發不出」的盲區。
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: python scripts/check_data_freshness.py
+
+      - name: 資料陳舊 Email 通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 資料未跟上市場（可能靜默停擺）"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            資料新鮮度看門狗偵測到資料落後市場，可能有排程靜默停擺。
+            請至以下連結查看細節：
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

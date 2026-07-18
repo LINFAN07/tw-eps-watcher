@@ -1,0 +1,47 @@
+name: 新股發現
+
+on:
+  schedule:
+    # 台灣時間每月 1 日 13:00（UTC 05:00）。比對名冊、補進新掛牌股，
+    # 之後既有的季度/月度下載排程會自然回填其歷史資料。
+    - cron: '0 5 1 * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv
+
+      - name: 發現並補進新掛牌股
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python scripts/discover_new_stocks.py
+
+      - name: 排程失敗 Email 通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 新股發現失敗"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            新股發現排程執行失敗，請至以下連結查看錯誤日誌：
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

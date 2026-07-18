@@ -48,6 +48,10 @@ FINMIND_API       = "https://api.finmindtrade.com/api/v4/data"
 CALL_INTERVAL     = 6.5
 PRICE_SAMPLE_SIZE = 10
 PRICE_WINDOW_DAYS = 15
+# 錨點股：熟到能一眼看穿的權值股，每次「必比」而非碰運氣被隨機抽到。
+# 系統性錯誤（整批日期位移、單位錯、來源抓錯）會先在這些名字上露餡——
+# 把「我腦中台積電該多少」的直覺，變成一定會跑到的防線。
+ANCHOR_STOCKS = ["2330", "2317", "2454", "2882", "1301", "2412", "2603", "2891"]
 # 收盤價比對容許 1 分錢誤差（雙方四捨五入位數可能不同）
 PRICE_EPSILON     = 0.011
 
@@ -257,8 +261,12 @@ def check_price_source(stock_id: str, start: str, latest_ok: str) -> list[tuple]
 
 
 def run_cross_source_check(all_ids: list[str]) -> list[tuple]:
-    sample = random.sample(all_ids, min(PRICE_SAMPLE_SIZE, len(all_ids)))
-    start  = (date.today() - timedelta(days=PRICE_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    # 錨點股一定納入（存在於資料庫者），再以隨機抽樣補足其餘名額
+    anchors = [s for s in ANCHOR_STOCKS if s in set(all_ids)]
+    pool    = [s for s in all_ids if s not in anchors]
+    extra   = random.sample(pool, min(PRICE_SAMPLE_SIZE, len(pool)))
+    sample  = anchors + extra
+    start   = (date.today() - timedelta(days=PRICE_WINDOW_DAYS)).strftime("%Y-%m-%d")
     # 最近 2 天不比對：排程可能尚未執行，或交易所尚未發布
     latest_ok = (date.today() - timedelta(days=2)).strftime("%Y-%m-%d")
 

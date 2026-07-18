@@ -87,6 +87,42 @@
 - [x] 定期驗證估值計算結果是否合理（抽樣比對）
   - **實作**：`scripts/validate_valuations.py` 每週隨機抽樣 100 支股票，驗證價格順序（cheap < fair < expensive）、status 與現價一致性、倍數合理範圍，發現嚴重問題寄送 Email；搭配 `.github/workflows/weekly_validate.yml` 每週一 09:00 自動執行
 
+### 資料存活性盤點（2026-07-18 新增）
+
+> 動機：既有防線幾乎全在防「寫錯數字」，卻沒防「整個資料悄悄凍結、市場在動而它不動」。
+> 這類 bug 完全沒有症狀——不會報錯，只會讓資料庫和真實市場逐月背離。
+
+- [x] **A. 新股發現排程（只縮不長 bug）**（2026-07-18 完成）：唯一會新增 `stocks` 的
+  `init_download.py` 不在任何 workflow，其餘腳本對 `stocks` 全是 `select`/`update`，
+  新掛牌股永遠進不來。→ `discover_new_stocks.py` + `discover_stocks.yml`（每月）。
+  **實跑當場抓到 7 支遺漏新股**（7418 香繼光、7924 TLC-KY…），確認盲區為真。
+- [x] **B. 資料新鮮度看門狗（靜默凍結）**（2026-07-18 完成）：排程只有 `if: failure()`
+  會寄信，「工作沒失敗但資料沒往前推」「cron 沒被觸發」都沒警報。→ `check_data_freshness.py`
+  以參考股 2330 的市場最新交易日比對我方最新股價，落後 exit 1 寄信。CNY-proof。已實跑驗證。
+- [x] **C. GitHub Actions 死人開關（cron 沒響）**（2026-07-18 完成）：GitHub 對私有 repo
+  60 天無 commit 會停用排程。→ 看門狗在資料新鮮時 ping `HEALTHCHECK_URL`；ping 停了由
+  healthchecks.io 從外部通知。ping 程式已內建，**待你註冊 healthchecks.io 並設 secret 才生效**。
+- [x] **D. 錨點股常駐跨來源比對**（2026-07-18 完成）：跨來源比對原本抽隨機 10 支，權值股未必被抽到。
+  → `ANCHOR_STOCKS`（2330/2317/2454/2882/1301/2412/2603/2891）每週必比，隨機抽樣再補其餘。
+- [ ] **E. 股本變動回溯調整（減資/增資/分割）** — 方向：偵測並標記（不重算歷史）。
+  - **可行性已查明**：`download_balance_sheet.py` 每季都抓 `CapitalStock`，但只把最新一筆
+    存進 `listed_shares`，**逐季股本全被丟棄**。資料源已在手，只差持久化。
+  - **實作計畫（待動工）**：① `balance_sheet_quarterly` 新增 `shares_thousand` 欄；
+    ② download 時每季一併寫入（該腳本每次重抓 10 年，一次排程即回填全歷史）；
+    ③ 新增 `patch_capital_change_warning.py`：逐季股本變動 > 15% 者寫 `capital_change_warning`；
+    ④ `valuations` 加該旗標欄 + 前端徽章；⑤ 掛進重算排程。
+- [ ] **F. 除權息還原歷史股價** — 影響面已評估（2026-07-18）。
+  - **實測**：近10年累積現金股利/現價 = 長榮 75%、台塑 59%、國泰金 25%、台積電僅 5%。
+    對高殖利率股（P/B 主打的金融/傳產）造成歷史估值帶高估數十個百分點，屬實質偏差。
+  - **路徑限制**：FinMind 還原股價（TaiwanStockPriceAdj）為**付費資料集**，免費帳號被擋。
+    免費做法只能用自有 `dividends` 表自建「後向還原序列」重畫河流圖。
+  - **待你決策**：(a) 用自有股利自建還原序列（工程大、改動全站歷史帶）；
+    (b) 維持原始價，只在高殖利率股標註「未還原除權息」；(c) 付費升級 FinMind。
+- [x] **G. Supabase 免費方案容量/休眠監控**（2026-07-18 完成）
+  - **防休眠**：`data_health.yml` 每日查詢 Supabase，天然重置 7 天閒置計時器，無需額外程式。
+  - **容量**：`schema.sql` 新增 `db_size_mb()`（`pg_database_size`，免 Management API token），
+    `check_data_freshness.py` 每日檢查，≥90% 觸發 exit 1 通知、≥80% 提醒。部署函式後自動生效。
+
 ### 已知限制（非缺陷，查證後確認無法以現有資料改善）
 
 - **部分股票無 P/B**：不是程式問題，是資料本身不存在。

@@ -174,3 +174,17 @@ ALTER TABLE valuations
   ALTER COLUMN pfcf_cheap_pfcf      TYPE DECIMAL(8, 4),
   ALTER COLUMN pfcf_fair_pfcf       TYPE DECIMAL(8, 4),
   ALTER COLUMN pfcf_expensive_pfcf  TYPE DECIMAL(8, 4);
+
+-- ─────────────────────────────────────────────────────────
+-- 容量監控用函式（2026-07-18）
+--
+-- check_data_freshness.py 每日以 rpc 呼叫此函式，取得資料庫實際大小（MB），
+-- 接近 Supabase 免費層 500 MB 上限時告警。用 pg_database_size 直接量測，
+-- 免 Management API token、免不可靠的 count 查詢。
+-- SECURITY DEFINER 讓 anon/authenticated 角色也能呼叫。
+-- ─────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION db_size_mb()
+  RETURNS double precision
+  LANGUAGE sql SECURITY DEFINER
+  AS $$ SELECT pg_database_size(current_database()) / 1048576.0 $$;
