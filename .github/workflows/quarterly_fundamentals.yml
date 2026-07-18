@@ -137,6 +137,13 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/patch_debt_ratio.py
 
+      # 股本變動偵測：讀 balance_sheet_quarterly 逐季股本，標記減資/增資影響河流圖的股票
+      - name: 偵測股本變動（valuations.capital_change_warning）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/patch_capital_change_warning.py
+
       - name: 排程失敗 Email 通知
         if: failure()
         uses: dawidd6/action-send-mail@v3

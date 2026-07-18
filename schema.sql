@@ -188,3 +188,23 @@ CREATE OR REPLACE FUNCTION db_size_mb()
   RETURNS double precision
   LANGUAGE sql SECURITY DEFINER
   AS $$ SELECT pg_database_size(current_database()) / 1048576.0 $$;
+
+-- ─────────────────────────────────────────────────────────
+-- 股本變動偵測（減資/增資/分割）（2026-07-18）
+--
+-- 動機：listed_shares 只存最新值，所有「每股」序列（EPS、淨值、營收）以最新股本
+-- 回算歷史，減資/增資點會在河流圖出現假斷崖，且畫面毫無提示。
+-- 方向：偵測並標記（不重算歷史），符合「警告而非竄改」原則。
+--
+-- shares_thousand：逐季流通股數（千股），由 download_balance_sheet.py 從各季
+--   CapitalStock 推得（= 股本元 / 10 / 1000）。原本每季股本抓了卻只留最新一筆，
+--   此欄把歷史保存下來，才能偵測變動。
+-- capital_change_warning：patch_capital_change_warning.py 偵測到相鄰季股本變動
+--   ≥ 15% 時寫入的提示文字（與 warning / nonop_warning 同為 TEXT）。
+-- ─────────────────────────────────────────────────────────
+
+ALTER TABLE balance_sheet_quarterly
+  ADD COLUMN IF NOT EXISTS shares_thousand BIGINT;   -- 逐季流通股數（千股）
+
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS capital_change_warning TEXT;

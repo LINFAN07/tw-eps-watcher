@@ -104,13 +104,14 @@
   healthchecks.io 從外部通知。ping 程式已內建，**待你註冊 healthchecks.io 並設 secret 才生效**。
 - [x] **D. 錨點股常駐跨來源比對**（2026-07-18 完成）：跨來源比對原本抽隨機 10 支，權值股未必被抽到。
   → `ANCHOR_STOCKS`（2330/2317/2454/2882/1301/2412/2603/2891）每週必比，隨機抽樣再補其餘。
-- [ ] **E. 股本變動回溯調整（減資/增資/分割）** — 方向：偵測並標記（不重算歷史）。
-  - **可行性已查明**：`download_balance_sheet.py` 每季都抓 `CapitalStock`，但只把最新一筆
-    存進 `listed_shares`，**逐季股本全被丟棄**。資料源已在手，只差持久化。
-  - **實作計畫（待動工）**：① `balance_sheet_quarterly` 新增 `shares_thousand` 欄；
-    ② download 時每季一併寫入（該腳本每次重抓 10 年，一次排程即回填全歷史）；
-    ③ 新增 `patch_capital_change_warning.py`：逐季股本變動 > 15% 者寫 `capital_change_warning`；
-    ④ `valuations` 加該旗標欄 + 前端徽章；⑤ 掛進重算排程。
+- [x] **E. 股本變動偵測並標記（減資/增資/分割）**（2026-07-18 建置完成，待部署啟用）
+  - ① `schema.sql`：`balance_sheet_quarterly` 加 `shares_thousand`、`valuations` 加
+    `capital_change_warning`。② `download_balance_sheet.py` 每季寫入 `shares_thousand`
+    （每次重抓 10 年，一次排程即回填全歷史）。③ `patch_capital_change_warning.py`：
+    偵測相鄰季股本變動 ≥ 15%、近 5 年內的事件，報最近一次（減資/增資），偵測邏輯已單元測試通過。
+    ④ 掛進 `quarterly_fundamentals.yml` 重算 job。⑤ 前端 ValuationCard 藍色 🔀 徽章。
+  - **啟用步驟**：(1) Supabase 執行 schema.sql 新增兩欄；(2) 跑一次 `download_balance_sheet.py`
+    回填逐季股本；(3) 跑 `patch_capital_change_warning.py`（之後每季排程自動執行）。
 - [ ] **F. 除權息還原歷史股價** — 影響面已評估（2026-07-18）。
   - **實測**：近10年累積現金股利/現價 = 長榮 75%、台塑 59%、國泰金 25%、台積電僅 5%。
     對高殖利率股（P/B 主打的金融/傳產）造成歷史估值帶高估數十個百分點，屬實質偏差。

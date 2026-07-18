@@ -20,6 +20,7 @@ interface Valuation {
   status: string
   warning?: string | null
   nonop_warning?: string | null
+  capital_change_warning?: string | null
   updated_at: string
   pb_book_value?: number | null
   pb_cheap_pb?: number | null
@@ -238,6 +239,13 @@ export default function ValuationCard({
         <div className="flex gap-2 items-start bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 mb-4 text-sm text-orange-800">
           <span className="mt-0.5 shrink-0">🏭</span>
           <span>{v.nonop_warning}</span>
+        </div>
+      )}
+      {/* 股本變動警告（減資/增資/分割，任何模型皆顯示，因每股序列基準受影響）*/}
+      {v.capital_change_warning && (
+        <div className="flex gap-2 items-start bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 mb-4 text-sm text-sky-800">
+          <span className="mt-0.5 shrink-0">🔀</span>
+          <span>{v.capital_change_warning}</span>
         </div>
       )}
 

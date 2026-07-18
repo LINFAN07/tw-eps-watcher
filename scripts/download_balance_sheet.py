@@ -132,11 +132,17 @@ def download_stock_bvps(stock_id: str) -> int:
         if total_assets and total_assets > 0 and total_liab is not None:
             debt_ratio = round(total_liab / total_assets * 100, 2)
 
+        # 逐季流通股數（千股）= 股本元 / 面額10 / 1000。
+        # 保存歷史股本，供 patch_capital_change_warning.py 偵測減資/增資；
+        # 過去只留最新一筆到 stocks.listed_shares，歷史全被丟棄。
+        shares_thousand = int(capital / 10 / 1000)
+
         rows.append({
             "stock_id":             stock_id,
             "quarter_end_date":     date_str,
             "book_value_per_share": round(bvps, 4),
             "debt_ratio":           debt_ratio,
+            "shares_thousand":      shares_thousand if shares_thousand > 0 else None,
         })
 
     if not rows:
@@ -216,7 +222,7 @@ def main():
         time.sleep(CALL_INTERVAL)
 
     print(f"\n✅ 完成，共寫入 {written_total} 筆每股淨值資料")
-    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
+    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
 
 if __name__ == "__main__":
