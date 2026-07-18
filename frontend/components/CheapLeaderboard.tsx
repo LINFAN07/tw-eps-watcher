@@ -37,6 +37,7 @@ async function fetchModel(
     current_price:    Number(r.current_price),
     cheap_price:      Number(r[priceCol]),
     warning:          (r.warning as string | null) ?? null,
+    nonop_warning:    (r.nonop_warning as string | null) ?? null,
     ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
     pb_book_value:    r.pb_book_value != null ? Number(r.pb_book_value) : null,
     operating_margin: r.operating_margin != null ? Number(r.operating_margin) : null,
@@ -98,10 +99,11 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
 
     if (models.length < 2) continue
 
-    // 以 P/E 便宜價為參考，依序 fallback
-    const cheapPrice = peValid                   ? Number(r.cheap_price)
-      : r.pb_cheap_price   != null               ? Number(r.pb_cheap_price)
-      : r.ps_cheap_price   != null               ? Number(r.ps_cheap_price)
+    // 參考便宜價必須取自「投了便宜票」的模型：若只挑第一個非 null 價格，
+    // 會拿一個判定「昂貴」的模型價格去算折價，導致折價欄失真甚至變負值。
+    const cheapPrice = peValid                                 ? Number(r.cheap_price)
+      : r.pb_status === '便宜' && r.pb_cheap_price   != null    ? Number(r.pb_cheap_price)
+      : r.ps_status === '便宜' && r.ps_cheap_price   != null    ? Number(r.ps_cheap_price)
       : Number(r.pfcf_cheap_price)
 
     rows.push({
