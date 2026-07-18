@@ -69,9 +69,38 @@ jobs:
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
         run: python scripts/download_cash_flows.py
 
+  # 損益表：營業利益率（operating_margin）的 TTM 分子來源，逐股呼叫 FinMind（約 4.2 小時）
+  # 刻意沿用 FinMind 而非交易所綜合損益表 OpenAPI：OpenAPI 是「年度累計」且僅最新一季、無歷史，
+  # 與 income_statement_quarterly 既有的單季歷史序列基準不一致，混用會讓 TTM 加總失真。
+  # 三個 FinMind 工作（淨值／現金流／損益表）必須串接而非並行，否則同一 token 會撞速率限制。
+  income:
+    needs: cash_flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv
+
+      - name: 下載損益表（FinMind）
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/download_income_statement.py
+
   # 基準值更新後必須重算，否則網站仍顯示舊估值
   recalculate:
-    needs: cash_flows
+    needs: income
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -93,6 +122,20 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/calculate_alt_valuations.py
+
+      # 營業利益率：分母借用上一步剛寫入的 valuations.ps_revenue_per_share，順序不可顛倒
+      - name: 重算營業利益率（TTM operating_margin）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/calculate_quality_metrics.py
+
+      # 負債比：把 balance_sheet_quarterly 最新一季搬進 valuations.debt_ratio 供前端顯示
+      - name: 回填負債比（valuations.debt_ratio）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/patch_debt_ratio.py
 
       - name: 排程失敗 Email 通知
         if: failure()
