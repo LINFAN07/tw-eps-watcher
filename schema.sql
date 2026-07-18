@@ -51,10 +51,12 @@ CREATE TABLE IF NOT EXISTS dividends (
   PRIMARY KEY (stock_id, ex_date)
 );
 
--- 索引：加速股票名稱搜尋與歷史資料查詢
-CREATE INDEX IF NOT EXISTS idx_stocks_name       ON stocks(name);
-CREATE INDEX IF NOT EXISTS idx_eps_stock_date    ON eps_quarterly(stock_id, quarter_end_date DESC);
-CREATE INDEX IF NOT EXISTS idx_prices_stock_date ON daily_prices(stock_id, date DESC);
+-- 索引：加速股票名稱搜尋
+CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name);
+-- 註：不再建 (stock_id, 日期 DESC) 的次要索引——各表主鍵已是 (stock_id, 日期)，
+--     btree 可同時服務 ASC/DESC 查詢，額外索引只是白白多存一份。
+--     daily_prices 那份曾達 259MB，是免費層 500MB 爆量主因，已於 2026-07-18 移除。
+--     （原 idx_eps_stock_date、idx_prices_stock_date 一併移除）
 
 -- =============================================
 -- 替代估值模型擴充（P/B、P/S、P/FCF）
@@ -71,7 +73,7 @@ CREATE TABLE IF NOT EXISTS balance_sheet_quarterly (
   book_value_per_share DECIMAL(12, 4) NOT NULL,  -- 每股淨值（元）
   PRIMARY KEY (stock_id, quarter_end_date)
 );
-CREATE INDEX IF NOT EXISTS idx_bsq_stock_date ON balance_sheet_quarterly(stock_id, quarter_end_date DESC);
+-- （idx_bsq_stock_date 已移除：與主鍵 (stock_id, quarter_end_date) 重複）
 
 -- 月營收（供 P/S 估值用；revenue 單位：千元）
 CREATE TABLE IF NOT EXISTS monthly_revenue (
@@ -80,7 +82,7 @@ CREATE TABLE IF NOT EXISTS monthly_revenue (
   revenue    BIGINT      NOT NULL,  -- 月營收（千元）
   PRIMARY KEY (stock_id, year_month)
 );
-CREATE INDEX IF NOT EXISTS idx_rev_stock_month ON monthly_revenue(stock_id, year_month DESC);
+-- （idx_rev_stock_month 已移除：與主鍵 (stock_id, year_month) 重複）
 
 -- 季度現金流量（供 P/FCF 估值用；單位：千元）
 CREATE TABLE IF NOT EXISTS cash_flows_quarterly (
@@ -90,7 +92,7 @@ CREATE TABLE IF NOT EXISTS cash_flows_quarterly (
   capex            DECIMAL(20, 2),  -- 資本支出（千元，通常為負值）
   PRIMARY KEY (stock_id, quarter_end_date)
 );
-CREATE INDEX IF NOT EXISTS idx_cf_stock_date ON cash_flows_quarterly(stock_id, quarter_end_date DESC);
+-- （idx_cf_stock_date 已移除：與主鍵 (stock_id, quarter_end_date) 重複）
 
 -- valuations 表新增替代估值欄位
 ALTER TABLE valuations
@@ -127,7 +129,7 @@ CREATE TABLE IF NOT EXISTS income_statement_quarterly (
   net_income       DECIMAL(20, 2),  -- 稅後淨利（元）
   PRIMARY KEY (stock_id, quarter_end_date)
 );
-CREATE INDEX IF NOT EXISTS idx_is_stock_date ON income_statement_quarterly(stock_id, quarter_end_date DESC);
+-- （idx_is_stock_date 已移除：與主鍵 (stock_id, quarter_end_date) 重複）
 
 -- valuations 表新增業外收支警告欄位
 ALTER TABLE valuations

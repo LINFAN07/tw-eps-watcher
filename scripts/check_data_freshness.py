@@ -107,10 +107,13 @@ def check_db_size() -> list[str]:
 
     pct = mb / FREE_TIER_DB_MB * 100
     print(f"\n資料庫容量：{mb:.0f} MB / {FREE_TIER_DB_MB} MB（{pct:.0f}%）")
-    if pct >= 90:
-        return [f"資料庫已用 {mb:.0f} MB（{pct:.0f}%），逼近免費層 {FREE_TIER_DB_MB} MB 上限"]
-    if pct >= 80:
-        print(f"  ⚠️  已達 {pct:.0f}%，請留意成長趨勢")
+    # 免費層超過 500MB 會被鎖成唯讀（所有排程停擺），故達 96% 即寄緊急信、
+    # 留約 20MB（數月成長）緩衝反應。85%~96% 只在日誌提醒，避免長期高水位天天寄信。
+    if pct >= 96:
+        return [f"資料庫已用 {mb:.0f} MB（{pct:.0f}%），逼近免費層 {FREE_TIER_DB_MB} MB 上限，"
+                "超過會被鎖唯讀。請清理膨脹（VACUUM FULL）或裁減日股價年數。"]
+    if pct >= 85:
+        print(f"  ⚠️  已達 {pct:.0f}%，請留意成長趨勢（達 96% 會寄信示警）")
     return []
 
 
