@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { isPeUnreliable } from '@/lib/peReliability'
 import { getTrackRecord, type Tone } from '@/lib/backtest'
+import { getBandStability, type BandLevel } from '@/lib/bandStability'
 
 interface EpsQuarter {
   quarter_end_date: string
@@ -100,6 +101,12 @@ const FINANCE_INDUSTRIES = /銀行|保險|證券|金融/
 function getDebtTier(ratio: number, industry?: string | null) {
   const tiers = FINANCE_INDUSTRIES.test(industry ?? '') ? DEBT_TIERS_FINANCE : DEBT_TIERS_GENERAL
   return tiers.find(t => ratio >= t.min)!
+}
+
+const BAND_STYLE: Record<BandLevel, { icon: string; cls: string }> = {
+  stable:  { icon: '🎯', cls: 'text-green-700 bg-green-50 border-green-200' },
+  normal:  { icon: '〰️', cls: 'text-gray-600 bg-gray-50 border-gray-200' },
+  diffuse: { icon: '🌫️', cls: 'text-amber-800 bg-amber-50 border-amber-200' },
 }
 
 // 回測實績的呈現強度：價值陷阱要看得見，表現好的不必喧賓奪主
@@ -246,6 +253,14 @@ export default function ValuationCard({
   // 目前模型在本產業的歷史實績（只有 P/E、P/B 回測過，其餘回傳 null 不顯示）
   const track = getTrackRecord(active, industry)
 
+  // 估值帶穩定度：帶太寬代表這支股票根本沒有估值錨，「便宜價」只是統計百分位。
+  // 由現有的倍數欄位即時算出，不需額外欄位或排程。
+  const band = active === 'pe'
+    ? getBandStability(v.cheap_pe, v.fair_pe, v.expensive_pe, 'pe')
+    : active === 'pb'
+      ? getBandStability(v.pb_cheap_pb, v.pb_fair_pb, v.pb_expensive_pb, 'pb')
+      : null
+
   const prevTTM = prevYearQuarters.length === 4
     ? prevYearQuarters.reduce((s, q) => s + q.eps, 0)
     : null
@@ -389,6 +404,18 @@ export default function ValuationCard({
           </span>
         )}
       </div>
+
+      {/* 估值帶穩定度：唯一通過回測驗證的訊號品質指標（見 lib/bandStability.ts）*/}
+      {band && (
+        <div className={`mt-4 rounded-xl border px-4 py-2.5 text-xs ${BAND_STYLE[band.level].cls}`}>
+          <span className="mr-1">{BAND_STYLE[band.level].icon}</span>
+          <span className="font-semibold">{band.label}</span>
+          <span className="ml-1.5 opacity-60">
+            （帶寬 {band.width.toFixed(2)}＝(昂貴−便宜)÷合理）
+          </span>
+          <span className="ml-1.5">{band.hint}</span>
+        </div>
+      )}
 
       {/* 此模型在本產業的歷史實績。放在目標價正下方而非另闢頁面，
           是因為「便宜」若不配上「便宜之後發生了什麼」，很容易被讀成「買了會賺」。*/}

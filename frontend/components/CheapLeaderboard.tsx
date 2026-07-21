@@ -1,8 +1,17 @@
 import { getSupabase } from '@/lib/supabase'
 import { isPeUnreliable } from '@/lib/peReliability'
+import { getBandStability } from '@/lib/bandStability'
 import CheapLeaderboardClient, { type LeaderboardRow, type LeaderboardData } from './CheapLeaderboardClient'
 
 const PAGE = 1000
+
+/** 各模型的 (便宜, 合理, 昂貴) 倍數欄位，供計算估值帶寬 */
+const RATIO_COLS: Record<string, [string, string, string] | null> = {
+  pe: ['cheap_pe', 'fair_pe', 'expensive_pe'],
+  pb: ['pb_cheap_pb', 'pb_fair_pb', 'pb_expensive_pb'],
+  ps: null,
+  pfcf: null,
+}
 
 async function fetchModel(
   db: ReturnType<typeof getSupabase>,
@@ -11,7 +20,11 @@ async function fetchModel(
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
   const peExtra   = model === 'pe' ? ',pe_reliable,warning,nonop_warning' : ''
-  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra},stocks(name,industry,market)`
+  // 估值帶穩定度只在 P/E 與 P/B 驗證過預測力（見 lib/bandStability.ts），
+  // 其餘模型不取倍數欄位，也不套用這兩者的門檻
+  const ratioCols = RATIO_COLS[model]
+  const ratioExtra = ratioCols ? `,${ratioCols.join(',')}` : ''
+  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra}${ratioExtra},stocks(name,industry,market)`
 
   // 排序鍵（現價 ÷ 便宜價）是計算值，資料庫無法排序，必須取回完整候選再排。
   // 原本只取前 200 筆，但「便宜」股最多達 525 支（P/B），
@@ -42,6 +55,10 @@ async function fetchModel(
     ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
     pb_book_value:    r.pb_book_value != null ? Number(r.pb_book_value) : null,
     operating_margin: r.operating_margin != null ? Number(r.operating_margin) : null,
+    band_level:       ratioCols
+      ? getBandStability(r[ratioCols[0]] as number, r[ratioCols[1]] as number,
+                         r[ratioCols[2]] as number, model)?.level ?? null
+      : null,
     stocks:           r.stocks as { name: string; industry: string; market: string } | null,
   }))
 

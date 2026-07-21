@@ -2,6 +2,7 @@
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { getTrackRecord, getWorstTrackRecord } from '@/lib/backtest'
+import type { BandLevel } from '@/lib/bandStability'
 
 export interface LeaderboardRow {
   stock_id: string
@@ -13,6 +14,8 @@ export interface LeaderboardRow {
   ttm_eps?: number | null
   pb_book_value?: number | null
   operating_margin?: number | null
+  /** 估值帶穩定度；僅 P/E 與 P/B 有值（其餘模型未驗證預測力，見 lib/bandStability.ts）*/
+  band_level?: BandLevel | null
   stocks: { name: string; industry: string; market: string } | null
   models?: string[]  // 多模型共識標籤，如 ['P/E', 'P/B', 'P/FCF']
 }
@@ -49,6 +52,12 @@ function isKYStock(row: LeaderboardRow): boolean {
 const KY_TOOLTIP = '此族群歷史報酬中位數 −5.1%（同期非 KY 為 +4.1%），正報酬率僅 43.2%。'
   + '便宜訊號在 KY 股上一樣有效，但拉不回負的絕對報酬。關閉此篩選即可看到它們。'
 
+// 依據：38,274 筆便宜訊號回測，帶寬最寬的五分之一，12 個月報酬中位數 +3.4%、
+// 正報酬率 55%；最窄的五分之一為 +10.0%、66%。詳見 lib/bandStability.ts。
+const BAND_TOOLTIP = '估值帶＝(昂貴倍數−便宜倍數)÷合理倍數。帶太寬代表這支股票的歷史估值'
+  + '散得很開，「便宜價」只是統計上的第 20 百分位，未必對應真實低估。'
+  + '回測顯示帶最寬的 20% 訊號，12 個月報酬中位數僅 +3.4%（最窄組 +10.0%）。'
+
 // 從 TTM EPS 和每股淨值推算 ROE（EPS 為負時回傳負 ROE；淨值為負時分母無意義，回傳 null）
 function calcRoe(row: LeaderboardRow): number | null {
   if (row.ttm_eps != null && row.pb_book_value != null && row.pb_book_value > 0) {
@@ -72,6 +81,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
   const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
   const [excludeKY, setExcludeKY]       = useState(true)   // 排除 KY 股（見 KY_TOOLTIP）
+  // 預設不啟用：帶寬只是「訊號較不可信」，不像 KY 股那樣有負的絕對報酬，
+  // 直接隱藏會讓使用者連選擇的機會都沒有
+  const [excludeDiffuse, setExcludeDiffuse] = useState(false)
 
   const rows = data[model]
 
@@ -91,6 +103,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
     .filter(r => !((r.roe != null && r.roe < 0) || (r.operating_margin != null && r.operating_margin < 0)))
     .filter(r => industry === '全部' || (r.stocks?.industry || '其他') === industry)
     .filter(r => !excludeKY    || !isKYStock(r))
+    .filter(r => !excludeDiffuse || r.band_level !== 'diffuse')
     .filter(r => !filterRoe    || (r.roe ?? 0) >= 15)
     .filter(r => {
       if (!filterMargin) return true
@@ -146,6 +159,15 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         <QualityToggle active={filterRoe}    onClick={() => setFilterRoe(v => !v)}    label="ROE ≥ 15%" />
         <QualityToggle active={filterMargin} onClick={() => setFilterMargin(v => !v)} label="利益率 ≥ 10%" />
         <QualityToggle active={excludeKY}    onClick={() => setExcludeKY(v => !v)}    label="排除 KY 股" title={KY_TOOLTIP} />
+        {/* 帶寬只在 P/E 與 P/B 驗證過，其餘分頁沒有資料可篩，不顯示開關 */}
+        {(model === 'pe' || model === 'pb') && (
+          <QualityToggle
+            active={excludeDiffuse}
+            onClick={() => setExcludeDiffuse(v => !v)}
+            label="排除估值帶發散"
+            title={BAND_TOOLTIP}
+          />
+        )}
       </div>
 
       {/* 多模型共識說明 */}
