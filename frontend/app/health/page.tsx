@@ -5,13 +5,11 @@ export const revalidate = 3600
 
 export const metadata = {
   title: '資料健康狀態 — 台股估值查詢',
-  description: '各資料表的新鮮度、模型覆蓋率與資料庫容量',
+  description: '各資料表的新鮮度與估值模型覆蓋率',
 }
 
-/** Supabase 免費層上限；超過會被鎖為唯讀，屆時全站無法更新 */
-const DB_LIMIT_MB = 500
-/** 每交易日新增約 2,400 列、一年 245 個交易日、每列含索引約 90 bytes */
-const GROWTH_MB_PER_YEAR = 50
+// 資料庫容量刻意不顯示：那是維運資訊，看股票的人不需要知道，
+// 顯示高水位只會造成無謂擔心。監控仍由 check_data_freshness.py 每日檢查並寄信。
 
 const REFERENCE_STOCK = '2330'
 
@@ -63,11 +61,6 @@ async function fetchCoverage() {
   }
 }
 
-async function fetchDbSize(): Promise<number | null> {
-  const { data, error } = await getSupabase().rpc('db_size_mb')
-  return error ? null : Number(data)
-}
-
 function fmt(value: string | null, unit: string) {
   if (!value) return '—'
   if (unit === 'quarter') return `${value.slice(0, 4)} Q${Math.ceil(+value.slice(5, 7) / 3)}`
@@ -87,13 +80,7 @@ function staleness(value: string | null, unit: string): 'ok' | 'warn' | 'bad' {
 }
 
 export default async function HealthPage() {
-  const [freshness, coverage, dbSize] = await Promise.all([
-    fetchFreshness(), fetchCoverage(), fetchDbSize(),
-  ])
-
-  const usedPct = dbSize != null ? (dbSize / DB_LIMIT_MB) * 100 : null
-  const monthsLeft = dbSize != null
-    ? Math.max(0, (DB_LIMIT_MB - dbSize) / GROWTH_MB_PER_YEAR * 12) : null
+  const [freshness, coverage] = await Promise.all([fetchFreshness(), fetchCoverage()])
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-8 md:py-12">
@@ -105,50 +92,6 @@ export default async function HealthPage() {
           顯示的是各來源自己回報的資料日期，不是系統時間。
         </p>
       </header>
-
-      {/* 容量 */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">資料庫容量</h2>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          {dbSize == null ? (
-            <p className="text-gray-400 text-sm">
-              無法取得容量（需在資料庫建立 <code>db_size_mb()</code> 函式）
-            </p>
-          ) : (
-            <>
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="text-2xl font-bold text-gray-900">
-                  {dbSize.toFixed(1)} <span className="text-base font-normal text-gray-400">/ {DB_LIMIT_MB} MB</span>
-                </span>
-                <span className={`text-sm font-semibold ${
-                  usedPct! >= 90 ? 'text-red-600' : usedPct! >= 80 ? 'text-amber-500' : 'text-green-600'
-                }`}>
-                  {usedPct!.toFixed(1)}%
-                </span>
-              </div>
-              <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                <div className={`h-full rounded-full ${
-                  usedPct! >= 90 ? 'bg-red-500' : usedPct! >= 80 ? 'bg-amber-400' : 'bg-green-500'
-                }`} style={{ width: `${Math.min(100, usedPct!)}%` }} />
-              </div>
-              <p className="text-xs text-gray-500 mt-3">
-                以每年約 {GROWTH_MB_PER_YEAR}MB 的增長推估，剩餘空間可再撐
-                <strong className="text-gray-800 mx-1">
-                  {monthsLeft! >= 12 ? `${(monthsLeft! / 12).toFixed(1)} 年` : `${monthsLeft!.toFixed(0)} 個月`}
-                </strong>
-                。超過上限會被鎖為唯讀，屆時全站無法更新。
-              </p>
-              {usedPct! >= 90 && (
-                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3">
-                  已超過 90%：執行週採樣瘦身（<code>scripts/thin_daily_prices.py</code>）可換到 5 年以上緩衝。
-                  注意瘦身後此數字不會下降——Postgres 的 DELETE 不歸還磁碟，
-                  但釋出的空間會被後續寫入重用，實際上已停止增長。
-                </p>
-              )}
-            </>
-          )}
-        </div>
-      </section>
 
       {/* 資料新鮮度 */}
       <section className="mb-10">
