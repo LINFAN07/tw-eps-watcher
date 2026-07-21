@@ -215,20 +215,29 @@ ALTER TABLE valuations
 -- P/E 可靠性旗標（2026-07-18）
 --
 -- 「推薦模型」與「便宜排行榜」都需要判斷「這支股票的 P/E 是否失真」。
--- 判斷本身是字串比對（warning 含「EPS 長期偏低」「顯著高於長期均值」或有 nonop_warning）。
+-- 判斷本身是字串比對（warning 含「EPS 長期偏低」「顯著高於長期均值」「遠低於常態水準」
+-- 或有 nonop_warning）。
 -- 過去這段比對散在前端 TS，與後端寫入的中文字串跨語言耦合：後端一改用詞，
 -- 前端就靜默失效。改用「生成欄位」把這唯一的判斷邏輯收斂到資料庫一處：
 --   - warning / nonop_warning 每次寫入時，DB 自動重算 pe_reliable，
 --     不需任何重算腳本、不需回填、不需掛進排程（避開「重算漏掛排程」那類事故）。
 --   - 前端只讀這個布林值，不再持有字串常數。
 -- 註：ALTER 當下 Postgres 會為既有列即時計算，無 null。
+-- 2026-07-21 追加「遠低於常態水準」：TTM 崩跌時改用常態化 EPS 算目標價的那條分支
+-- （calculate_valuation.py:203-211）。回測證實這類訊號沒有選股能力——持有 12 個月，
+-- TTM≤0 組中位報酬 3.74%（全市場等權 3.65%，等於隨機挑股），
+-- 獲利谷底組 0.95%（比隨機挑股還差 2.7pp），且逐年在 −7% ~ +20% 間劇烈擺盪。
+-- 依「沒有實證支持的訊號不放推薦位」原則（同 P/S、P/FCF 不顯示回測實績），
+-- 排除出排行榜與推薦模型；個股頁仍照常顯示常態化估值，那是查詢不是推薦。
 ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS pe_reliable BOOLEAN
   GENERATED ALWAYS AS (
     nonop_warning IS NULL
     AND (
       warning IS NULL
-      OR (warning NOT LIKE '%EPS 長期偏低%' AND warning NOT LIKE '%顯著高於長期均值%')
+      OR (warning NOT LIKE '%EPS 長期偏低%'
+          AND warning NOT LIKE '%顯著高於長期均值%'
+          AND warning NOT LIKE '%遠低於常態水準%')
     )
   ) STORED;
 

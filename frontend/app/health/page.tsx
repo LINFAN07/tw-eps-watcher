@@ -91,8 +91,7 @@ export default async function HealthPage() {
       <header className="mt-4 mb-8">
         <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">資料健康狀態</h1>
         <p className="text-gray-500">
-          不必登入 GitHub 就能知道排程有沒有跑、資料是不是還在往前推。
-          顯示的是各來源自己回報的資料日期，不是系統時間。
+          網站上的資料更新到什麼時候，以及每種估值涵蓋了多少股票。
         </p>
       </header>
 
@@ -100,17 +99,15 @@ export default async function HealthPage() {
       <section className="mb-10">
         <h2 className="text-lg font-semibold text-gray-800 mb-1">資料新鮮度</h2>
         <p className="text-sm text-gray-500 mb-4">
-          以參考股 {REFERENCE_STOCK} 查詢各表的最新資料日期。
+          各項資料的最新日期。綠燈代表如期更新，紅燈代表已經落後。
         </p>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 divide-y divide-gray-50">
           {freshness.map(f => {
             const state = f.failed ? 'bad' : staleness(f.value, f.unit)
             return (
               <div key={f.table} className="flex items-center justify-between px-6 py-3">
-                <div>
-                  <span className="text-gray-800">{f.label}</span>
-                  <code className="text-xs text-gray-400 ml-2">{f.table}</code>
-                </div>
+                {/* 只顯示中文名稱；資料表英文名是內部實作，使用者不需要知道 */}
+                <span className="text-gray-800">{f.label}</span>
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-gray-600">
                     {f.failed ? '查詢失敗' : fmt(f.value, f.unit)}
@@ -129,8 +126,8 @@ export default async function HealthPage() {
       <section>
         <h2 className="text-lg font-semibold text-gray-800 mb-1">模型覆蓋率</h2>
         <p className="text-sm text-gray-500 mb-4">
-          共 {coverage.total.toLocaleString()} 支股票。未涵蓋多為資料本身不存在
-          （新掛牌、興櫃半年報季數不足、FinMind 無該公司財報），非計算失敗。
+          共 {coverage.total.toLocaleString()} 支股票。未涵蓋的多是新掛牌、
+          財報年份還不夠長，或公司本身沒有公布該項資料。
         </p>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-3">
           {coverage.models.map(m => {

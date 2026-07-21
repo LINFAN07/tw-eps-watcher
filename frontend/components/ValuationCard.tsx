@@ -366,7 +366,7 @@ export default function ValuationCard({
       <div className="flex flex-wrap gap-4 text-sm text-gray-600 border-t border-current/10 pt-4">
         {active === 'pe' && <>
           <span>
-            TTM EPS <strong className="text-gray-800 ml-1">{v.ttm_eps}</strong>
+            近四季 EPS <strong className="text-gray-800 ml-1">{v.ttm_eps}</strong>
             {trendPct != null && (
               trendPct > 10
                 ? <span className="ml-1.5 text-xs font-semibold text-green-600">↑ 年增 {trendPct.toFixed(0)}%</span>
@@ -390,13 +390,13 @@ export default function ValuationCard({
           <span>每股淨值 <strong className="text-gray-800 ml-1">{v.pb_book_value} 元</strong></span>
         )}
         {active === 'ps' && v.ps_revenue_per_share != null && (
-          <span>TTM 每股營收 <strong className="text-gray-800 ml-1">{v.ps_revenue_per_share.toFixed(1)} 元</strong></span>
+          <span>近四季每股營收 <strong className="text-gray-800 ml-1">{v.ps_revenue_per_share.toFixed(1)} 元</strong></span>
         )}
         {active === 'pfcf' && v.pfcf_per_share != null && (
-          <span>TTM 每股 FCF <strong className="text-gray-800 ml-1">{v.pfcf_per_share.toFixed(1)} 元</strong></span>
+          <span>近四季每股自由現金流 <strong className="text-gray-800 ml-1">{v.pfcf_per_share.toFixed(1)} 元</strong></span>
         )}
         {active === 'yield' && v.yield_ttm_div != null && (
-          <span>TTM 現金股利 <strong className="text-gray-800 ml-1">{v.yield_ttm_div} 元</strong></span>
+          <span>近四季現金股利 <strong className="text-gray-800 ml-1">{v.yield_ttm_div} 元</strong></span>
         )}
         {basisAsOf && (
           <span className="basis-full text-xs text-gray-400 mt-1">
@@ -410,9 +410,7 @@ export default function ValuationCard({
         <div className={`mt-4 rounded-xl border px-4 py-2.5 text-xs ${BAND_STYLE[band.level].cls}`}>
           <span className="mr-1">{BAND_STYLE[band.level].icon}</span>
           <span className="font-semibold">{band.label}</span>
-          <span className="ml-1.5 opacity-60">
-            （帶寬 {band.width.toFixed(2)}＝(昂貴−便宜)÷合理）
-          </span>
+          <span className="ml-1.5 opacity-60">（帶寬 {band.width.toFixed(2)}）</span>
           <span className="ml-1.5">{band.hint}</span>
         </div>
       )}
@@ -463,7 +461,7 @@ export default function ValuationCard({
       {/* 近 4 季 EPS 明細（P/E 頁籤專屬）*/}
       {active === 'pe' && ttmQuarters.length === 4 && (
         <div className="mt-3 pt-3 border-t border-current/10">
-          <p className="text-xs text-gray-400 mb-2">近 4 季 EPS 明細（合計 = TTM）</p>
+          <p className="text-xs text-gray-400 mb-2">近四季 EPS 明細（相加即為上方的近四季 EPS）</p>
           <div className="flex gap-2">
             {ttmQuarters.map(q => (
               <div key={q.quarter_end_date} className="flex-1 text-center bg-white/60 rounded-lg px-2 py-1.5">

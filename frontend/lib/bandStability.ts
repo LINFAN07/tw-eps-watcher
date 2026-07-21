@@ -51,7 +51,7 @@ const LABEL: Record<BandLevel, string> = {
 const HINT: Record<BandLevel, string> = {
   stable: '歷史估值集中，便宜價對應較明確的市場共識。回測中這類訊號 12 個月報酬中位數約 +10%、正報酬率 66%。',
   normal: '歷史估值的集中程度中等。',
-  diffuse: '歷史估值散布很廣，「便宜價」只是統計上的第 20 百分位，未必對應真實的低估。回測中這類訊號 12 個月報酬中位數僅約 +3%、正報酬率 55%。',
+  diffuse: '歷史估值散布很廣，「便宜價」只是相對它自己的歷史偏低，未必真的被低估。回測中這類訊號 12 個月報酬中位數僅約 +3%、正報酬率 55%。',
 }
 
 export function getBandStability(

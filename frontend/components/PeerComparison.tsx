@@ -120,8 +120,8 @@ export default function PeerComparison({
         {pb && <Row label="股價淨值比 P/B" s={pb} ownMedian={ownFairPb} />}
       </div>
       <p className="text-xs text-gray-400 mt-2 px-1">
-        與 {industry} 同業比較，排名由便宜到貴。倍數超出合理範圍者（P/E 3～200、P/B 0.1～50）
-        不納入，避免異常值扭曲中位數。「自身歷史常態」為該股歷史倍數的第 50 百分位。
+        與 {industry} 同業比較，排名由便宜到貴。倍數異常的個股不納入，避免扭曲中位數。
+        「自身歷史常態」指這支股票過去十年估值的中間值。
       </p>
     </section>
   )

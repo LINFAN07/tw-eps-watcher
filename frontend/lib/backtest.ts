@@ -48,7 +48,7 @@ export function getTrackRecord(model: string, industry: string | null | undefine
     neutral: `歷史上此產業的 ${MODEL_LABEL[model]} 便宜訊號與同業無明顯差異`,
     bad: `注意：歷史上此產業的 ${MODEL_LABEL[model]} 便宜訊號多為價值陷阱`,
   }[tone] + `——過去 ${INDUSTRY_HORIZON} 個月持有期，訊號股報酬中位數 ${row.median.toFixed(1)}%，`
-    + `${dir}同業母體 ${Math.abs(row.excess).toFixed(1)} 個百分點（樣本 ${row.n.toLocaleString()} 筆）。`
+    + `${dir}同業平均 ${Math.abs(row.excess).toFixed(1)} 個百分點（樣本 ${row.n.toLocaleString()} 筆）。`
 
   return { ...row, tone, verdict }
 }
@@ -79,8 +79,8 @@ export function getOverall(group: string, horizon: number) {
  * 結果必須連同偏誤一起呈現。少了這段，上面的數字就是誤導。
  */
 export const CAVEATS = [
-  '倖存者偏差：母體不含已下市／停牌股票（約 198 檔），結果必然偏樂觀。',
-  '樣本重疊：每月選股搭配長持有期，觀測值高度重疊，勝率的統計顯著性被高估。',
-  '未計交易成本：手續費、證交稅與流動性衝擊皆未扣除。',
+  '已下市、停牌的股票不在統計範圍內（約 198 檔），因此結果偏樂觀。',
+  '每個月都重新選股、持有期又長，同一段行情被重複計入，勝率看起來會比實際更穩定。',
+  '沒有扣除手續費與證交稅，實際報酬會比這裡低一些。',
   '過去表現不代表未來。此為模型體檢，不是投資建議。',
 ]

@@ -138,12 +138,24 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFram
 
 
 def compute_normalized_eps(eps_df: pd.DataFrame) -> float | None:
-    """取近 5 年 EPS 算術平均作為常態化基準；不足 2 年資料回傳 None"""
+    """
+    取近 5 年 EPS 算術平均作為常態化基準；不足 2 年資料回傳 None。
+
+    回傳值的單位是「年度 EPS」，與 ttm_eps 同基準——所有呼叫端都拿它跟 TTM 比大小
+    （× 3 判獲利高峰、× 0.3 判獲利谷底），或直接當成 TTM 的替代值乘上 P/E 倍數。
+    eps_quarterly.eps 存的是「單季」值，季均必須先乘上一個 TTM 週期的期數（季報 4／
+    半年報 2）才能年化，否則就是拿「平均每季賺多少」去跟「這一年賺多少」比。
+
+    2026-07-21 事故：漏了這個 × w，季均被當年均用。判斷式 `ttm > normalized × 3`
+    實際變成 `ttm > 年均 × 0.75`，只要今年沒比五年均衰退 25% 以上就被標成
+    「獲利高峰、P/E 不可信」——全市場 633 檔中招（修正後僅 5 檔），儒鴻、豐泰
+    這類獲利穩定的公司也被誤標，連帶被踢出便宜排行榜與推薦模型。
+    """
     w = _eps_window(eps_df)
     recent = eps_df.tail(w * 5)["eps"].astype(float)
     if len(recent) < w * 2:
         return None
-    return float(recent.mean())
+    return float(recent.mean()) * w   # 季（或半年）均 → 年化，與 ttm_eps 同單位
 
 
 def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:

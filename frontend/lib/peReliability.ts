@@ -6,11 +6,14 @@
 // 何謂「P/E 失真」：
 //   - warning 含「EPS 長期偏低」：獲利太小，P/E 倍數失去意義
 //   - warning 含「顯著高於長期均值」：獲利高峰，TTM EPS 灌水使 P/E 假性偏低
+//   - warning 含「遠低於常態水準」：目標價改由常態化 EPS 推算，等於賭獲利回到歷史水準。
+//     回測顯示這類訊號 12 個月報酬中位數與隨機挑股相同（3.74% vs 3.65%），
+//     獲利谷底那半更差（0.95%），故不列入推薦。
 //   - nonop_warning：本業以外的一次性收益撐高 EPS
 // 命中任一項，P/E 就不應被推薦為主模型，也不應據以進入便宜排行榜。
 
 // 舊版字串比對——僅作為 pe_reliable 欄位尚未布署時的暫時退路（migration 完成後永不觸發）。
-const PE_UNRELIABLE_WARNINGS = ['EPS 長期偏低', '顯著高於長期均值']
+const PE_UNRELIABLE_WARNINGS = ['EPS 長期偏低', '顯著高於長期均值', '遠低於常態水準']
 
 export function isPeUnreliable(v: {
   pe_reliable?: boolean | null

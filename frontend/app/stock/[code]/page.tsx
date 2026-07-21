@@ -151,7 +151,7 @@ export default async function StockPage({ params }: Props) {
           <PERiverChart code={code} />
         </div>
         <p className="text-xs text-gray-400 mt-2 px-1">
-          綠線：便宜價｜藍線：合理價｜紅線：昂貴價｜黑線：實際收盤價。P/E 帶依每季 TTM EPS 動態調整。
+          綠線：便宜價｜藍線：合理價｜紅線：昂貴價｜黑線：實際收盤價。估值帶會隨每季財報更新而調整。
         </p>
       </section>
 
@@ -176,7 +176,7 @@ export default async function StockPage({ params }: Props) {
             <AltRiverChart code={code} model="pb" />
           </div>
           <p className="text-xs text-gray-400 mt-2 px-1">
-            以歷史 P/B 20/50/80 百分位為估值帶，適合資產型公司（銀行、地產、傳產）。
+            用過去十年的股價淨值比分布，劃出便宜／合理／昂貴三條線。適合資產型公司（銀行、地產、傳產）。
             每股淨值 {valuation.pb_book_value} 元。
           </p>
         </section>
@@ -192,8 +192,8 @@ export default async function StockPage({ params }: Props) {
             <AltRiverChart code={code} model="ps" />
           </div>
           <p className="text-xs text-gray-400 mt-2 px-1">
-            以歷史 P/S 20/50/80 百分位為估值帶，適合有營收但 EPS 偏低的成長型公司。
-            TTM 每股營收 {valuation.ps_revenue_per_share} 元。
+            用過去十年的股價營收比分布，劃出便宜／合理／昂貴三條線。適合有營收但獲利偏低的成長型公司。
+            近四季每股營收 {valuation.ps_revenue_per_share} 元。
           </p>
         </section>
       )}
@@ -208,8 +208,8 @@ export default async function StockPage({ params }: Props) {
             <AltRiverChart code={code} model="pfcf" />
           </div>
           <p className="text-xs text-gray-400 mt-2 px-1">
-            以歷史 P/FCF 20/50/80 百分位為估值帶，適合帳面獲利被折舊壓低但現金流充沛的公司（電信、基建）。
-            TTM 每股 FCF {valuation.pfcf_per_share?.toFixed(1)} 元。
+            用過去十年的股價自由現金流比分布，劃出便宜／合理／昂貴三條線。適合帳面獲利被折舊壓低、但現金流充沛的公司（電信、基建）。
+            近四季每股自由現金流 {valuation.pfcf_per_share?.toFixed(1)} 元。
           </p>
         </section>
       )}

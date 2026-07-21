@@ -27,7 +27,7 @@ export default function BacktestPage() {
         <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">模型體檢報告</h1>
         <p className="text-gray-500">
           這個網站告訴你「這支便宜」，但便宜之後發生了什麼？
-          用 {BACKTEST_PERIOD.from} ～ {BACKTEST_PERIOD.to}（{BACKTEST_PERIOD.months} 個月末切點）
+          用 {BACKTEST_PERIOD.from} ～ {BACKTEST_PERIOD.to}（共 {BACKTEST_PERIOD.months} 個月）
           的資料回測，答案在下面。
         </p>
       </header>
@@ -102,8 +102,8 @@ export default function BacktestPage() {
       <section className="mb-10">
         <h2 className="text-lg font-semibold text-gray-800 mb-1">哪些產業的訊號可信？</h2>
         <p className="text-sm text-gray-500 mb-4">
-          持有 {INDUSTRY_HORIZON} 個月、樣本 ≥30 筆。「超額」＝訊號股報酬中位數 −{' '}
-          <strong className="text-gray-700">同產業母體</strong>中位數。
+          持有 {INDUSTRY_HORIZON} 個月、至少 30 筆才列入。「超額」＝便宜股的報酬 −{' '}
+          <strong className="text-gray-700">同產業全體股票</strong>的報酬（皆取中位數）。
           跟同業比而非跟大盤比，才能區分「選股有效」與「整個產業在漲」。
         </p>
         <div className="grid gap-4 md:grid-cols-2">
@@ -157,17 +157,13 @@ export default function BacktestPage() {
       <section className="text-sm text-gray-500 space-y-2 border-t border-gray-200 pt-6">
         <h2 className="font-semibold text-gray-700">怎麼算的</h2>
         <p>
-          每個月最後一個交易日，用<strong className="text-gray-700">當時可得的資料</strong>重算歷史倍數的
-          20 百分位，挑出當時被判定便宜的股票，再看它們往後 6／12／24 個月的含息報酬。
+          每個月最後一個交易日，用<strong className="text-gray-700">當時可得的資料</strong>重算估值帶，
+          挑出當時被判定便宜的股票，再看它們往後 6／12／24 個月的含息報酬。
         </p>
         <p>
-          防止偷看未來的三道關卡：財報以<strong className="text-gray-700">申報期限</strong>
-          （Q1→5/15、Q2→8/31、Q3→11/14、年報→次年 3/31）當可用日，不是季末日；
-          百分位以累積方式計算，時點 T 只看得到 T 之前的樣本；
-          報酬以除權息還原價計算，因此是含息總報酬。
-        </p>
-        <p className="text-gray-400">
-          原始程式：<code className="text-gray-500">scripts/backtest_valuation.py</code>
+          為了不讓結果偷看未來，做了三件事：財報要等到<strong className="text-gray-700">公司實際公布之後</strong>
+          才採用，不是財報季一結束就當作已知；每個時間點只用當時之前的股價算估值帶；
+          報酬把配息也算進去，所以是含息總報酬。
         </p>
       </section>
     </main>
