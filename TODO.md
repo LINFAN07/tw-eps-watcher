@@ -129,6 +129,13 @@
   - **啟用步驟**：(1) Supabase 執行 schema.sql 新增 adjusted_close；(2) 部署程式；
     (3) 跑 `compute_adjusted_prices.py`；(4) 跑 `calculate_valuation.py` +
     `calculate_alt_valuations.py` 全庫重算。之後 `dividends_update`（7/9 月）自動維護。
+- [x] **H. 排程稽核自動化（2026-07-21 完成）**：專案已兩次踩到「腳本寫好卻沒掛排程」
+  （品質指標重算、業外收支偵測），這類缺陷不報錯、無症狀，只讓資料悄悄停在過去。
+  → `scripts/audit_workflows.py` 比對「scripts/ 下所有腳本」與「workflow 實際執行的腳本」，
+  另檢查 YAML 語法、cron 欄位數、腳本存在性、secrets、失敗通知；發現問題 exit 1 寄信。
+  已掛 `weekly_validate.yml`（每週一）。**已用假腳本實測會 exit 1，確認不是永遠回報成功的假保險。**
+  白名單只列「本來就不該有排程」的腳本——已排程者不得列入，否則被移出排程時稽核會沉默。
+
 - [x] **G. Supabase 免費方案容量/休眠監控**（2026-07-18 完成）
   - **防休眠**：`data_health.yml` 每日查詢 Supabase，天然重置 7 天閒置計時器，無需額外程式。
   - **容量**：`schema.sql` 新增 `db_size_mb()`（`pg_database_size`，免 Management API token），

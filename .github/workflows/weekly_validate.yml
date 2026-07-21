@@ -21,7 +21,14 @@ jobs:
           cache: 'pip'
 
       - name: 安裝套件
-        run: pip install requests supabase python-dotenv
+        run: pip install requests supabase python-dotenv pyyaml
+
+      # 排程稽核：比對「scripts/ 下所有腳本」與「workflow 實際執行的腳本」，
+      # 抓出寫好卻沒掛排程的工作。此類缺陷不報錯、無症狀，只會讓某個資料欄位
+      # 悄悄停在最後一次手動執行的值——專案已踩過兩次（品質指標重算、業外收支偵測）。
+      # 不需要資料庫，純靜態檢查，故放在估值驗證之前先跑。
+      - name: 排程稽核（確認每支腳本都真的會被執行）
+        run: python scripts/audit_workflows.py
 
       - name: 執行估值驗證（內部一致性 + 與 FinMind 跨來源比對）
         env:
