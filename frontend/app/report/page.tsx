@@ -132,10 +132,10 @@ export default async function ReportPage() {
         </>
       )}
 
+      {/* 這裡刻意只講「使用者看得到的範圍」。原文案提到「無法計算的互轉」「保留 90 天」，
+          那是實作細節（見 daily_price_update.py 的比對邏輯），對看股票的人沒有意義。 */}
       <p className="text-xs text-gray-400 mt-8 pt-4 border-t border-gray-100">
-        只記錄「便宜／合理／昂貴」之間的實際移動；與「無法計算」的互轉屬於資料狀態改變
-        （財報更新、模型失效），不是市場價格造成的變化，不列入。
-        記錄保留 90 天。
+        只列出因股價變動而改變估值狀態的股票。
         想知道這些訊號準不準，見 <Link href="/backtest" className="text-blue-600 hover:underline">模型體檢報告</Link>。
       </p>
     </main>
