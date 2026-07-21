@@ -285,3 +285,27 @@ CREATE INDEX IF NOT EXISTS idx_status_changes_date ON status_changes(date DESC);
 -- 但那需要約等於表大小的暫存空間，在容量吃緊時反而危險（2026-07-21 實測
 -- 已用 464.6MB / 500MB = 92.9%）。故：先 DROP，回收另行評估。
 -- ─────────────────────────────────────────────────────────
+
+-- ─────────────────────────────────────────────────────────
+-- 下市偵測（2026-07-21）
+--
+-- 為什麼需要：下市股的價格凍結在最後一個交易日，但目標價仍隨財報更新，
+-- 折價因此越算越誇張，這些「買不到的股票」會專門往排行榜頂端跑。
+-- 2026-07-21 實測：2,448 檔中有 120 檔已下市（4.9%），其中 6 檔佔據
+-- P/E 便宜榜（前 6 名中 4 名），且全數計入市場溫度計的分母。
+-- 跨來源驗證：抽查 9 檔，全部不在 TWSE 上市與 TPEx 上櫃名單，確為真下市。
+--
+-- last_seen_date：最後一次出現在交易所全市場清單的「資料日期」（非系統日期）。
+-- delisted_at   ：判定下市的資料日期；NULL 表示仍在市。
+--
+-- 判定規則寫在 daily_price_update.mark_delisted()：缺席超過 21 個日曆日
+-- （約 15 個交易日）才標記，長假與短期停牌不會誤判；一旦重新出現即自動清除，
+-- 停牌復牌不需人工介入。
+--
+-- 關鍵前提：任一市場抓取失敗的當日【不得】執行判定——那會把「來源故障」
+-- 誤判成「整個市場下市」。呼應「抓取失敗必須讓工作失敗」原則。
+ALTER TABLE stocks
+  ADD COLUMN IF NOT EXISTS last_seen_date DATE,
+  ADD COLUMN IF NOT EXISTS delisted_at    DATE;
+
+CREATE INDEX IF NOT EXISTS idx_stocks_delisted ON stocks(delisted_at);

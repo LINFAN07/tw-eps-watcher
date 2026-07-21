@@ -10,14 +10,17 @@ async function fetchAllValuations(db: ReturnType<typeof getSupabase>) {
   const all: { status: string; current_price: number; ttm_eps: number }[] = []
   let offset = 0
   while (true) {
+    // 排除已下市股票：它們的價格停在下市前，混進分母會讓市場看起來比實際便宜
     const { data, error } = await db.from('valuations')
-      .select('status,current_price,ttm_eps')
+      .select('status,current_price,ttm_eps,stocks!inner(delisted_at)')
       .neq('status', '無法計算')
       .gt('current_price', 0)
+      .is('stocks.delisted_at', null)
       .order('stock_id')
       .range(offset, offset + 999)
     if (error || !data) throw new Error(`估值分頁查詢失敗（offset=${offset}）：${error?.message}`)
-    all.push(...data)
+    // 只取統計要用的三欄；join 進來的 stocks 僅供過濾，不留在結果裡
+    all.push(...data.map(r => ({ status: r.status, current_price: r.current_price, ttm_eps: r.ttm_eps })))
     if (data.length < 1000) break
     offset += 1000
   }

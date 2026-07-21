@@ -173,6 +173,45 @@ _STATUS_COLS = "stock_id," + ",".join(
 STATUS_CHANGE_RETENTION_DAYS = 90
 
 
+ABSENT_DAYS = 21   # 缺席超過這麼多個日曆日（約 15 個交易日）才判定下市
+
+
+def mark_delisted(seen: set[str], known: set[str], data_date: str):
+    """
+    以「今天有沒有出現在交易所全市場清單」維護 stocks.last_seen_date / delisted_at。
+
+    為什麼要這個欄位：下市股的價格永遠停在最後一個交易日，但目標價仍隨財報更新，
+    折價越算越誇張，於是專門往排行榜頂端跑。2026-07-21 實測 2,448 檔中有 120 檔
+    已下市，其中 6 檔佔據 P/E 便宜榜（前 6 名中 4 名）。
+
+    設計取捨：
+    - 用日曆日門檻而非「連續 N 次缺席」，因為排程本身可能漏跑（本 repo 的排程
+      常態遲到，改過 cron 隔天甚至整天不觸發），用次數會把漏跑算成缺席。
+    - 重新出現即清除 delisted_at：停牌復牌不需人工介入，也能自我修正誤判。
+    - 呼叫端必須確認【所有市場都抓取成功】才呼叫——否則來源故障會被判成整批下市。
+    """
+    # 必須用 UPDATE 而非 upsert：upsert 會先嘗試 INSERT，而 stocks.name / market
+    # 是 NOT NULL，只帶 stock_id 的列會在衝突解析前就違反約束。
+    # 代碼清單分批送出，避免 URL 過長。
+    today_seen = sorted(seen & known)
+    for i in range(0, len(today_seen), 200):
+        (supabase.table("stocks")
+         .update({"last_seen_date": data_date, "delisted_at": None})
+         .in_("stock_id", today_seen[i:i + 200]).execute())
+
+    cutoff = (date.fromisoformat(data_date) - timedelta(days=ABSENT_DAYS)).isoformat()
+    resp = (supabase.table("stocks")
+            .update({"delisted_at": data_date})
+            .lt("last_seen_date", cutoff)      # last_seen_date 為 NULL 者不受影響
+            .is_("delisted_at", "null")
+            .execute())
+    if resp.data:
+        print(f"  新標記下市 {len(resp.data)} 檔："
+              f"{'、'.join(r['stock_id'] for r in resp.data[:10])}"
+              f"{' …' if len(resp.data) > 10 else ''}")
+    print(f"  在市 {len(today_seen)} 檔，缺席逾 {ABSENT_DAYS} 日者已標記下市")
+
+
 def judge_status(price: float, cheap, fair) -> str:
     """
     以現價比對「已算好的」目標價，判定便宜/合理/昂貴。
@@ -333,7 +372,17 @@ def run():
             if sid in known and (sid not in all_prices or src_date > all_prices[sid][0]):
                 all_prices[sid] = (src_date, p)
 
-    # 4. 快速更新估值現價與狀態
+    # 4. 下市偵測（只在所有市場都抓取成功時執行）
+    #    少一個市場就做判定，等於把「來源故障」寫成「整個市場下市」——
+    #    那比不做判定嚴重得多，故寧可跳過一天。
+    if failed:
+        print("\n有來源抓取失敗，跳過下市偵測（避免把故障誤判為下市）")
+    else:
+        print("\n下市偵測...")
+        seen = {sid for _, prices in sources for sid in prices}
+        mark_delisted(seen, known, max(d for d, _ in sources if d))
+
+    # 5. 快速更新估值現價與狀態
     print("\n更新估值...")
     update_valuations(all_prices)
 

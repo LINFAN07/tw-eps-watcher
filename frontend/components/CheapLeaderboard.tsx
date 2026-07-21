@@ -24,7 +24,10 @@ async function fetchModel(
   // 其餘模型不取倍數欄位，也不套用這兩者的門檻
   const ratioCols = RATIO_COLS[model]
   const ratioExtra = ratioCols ? `,${ratioCols.join(',')}` : ''
-  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra}${ratioExtra},stocks(name,industry,market)`
+  // stocks!inner + delisted_at is null：排除已下市股票。
+  // 它們的價格凍結在最後一個交易日，目標價卻仍隨財報更新，折價越算越誇張，
+  // 因此會專門往榜首跑（2026-07-21 實測前 6 名中有 4 名是下市股）。
+  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra}${ratioExtra},stocks!inner(name,industry,market)`
 
   // 排序鍵（現價 ÷ 便宜價）是計算值，資料庫無法排序，必須取回完整候選再排。
   // 原本只取前 200 筆，但「便宜」股最多達 525 支（P/B），
@@ -36,6 +39,7 @@ async function fetchModel(
       .eq(statusCol, '便宜')
       .gt('current_price', 0)
       .not(priceCol, 'is', null)
+      .is('stocks.delisted_at', null)
       .order('stock_id')   // 固定排序，確保跨頁不重複、不遺漏
       .range(offset, offset + PAGE - 1)
     // 故障要拋出，不可吞成空清單：否則暫時性 DB 錯誤會偽裝成「沒有便宜股」
@@ -79,7 +83,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     'ps_status', 'ps_cheap_price',
     'pfcf_status', 'pfcf_cheap_price',
     'ttm_eps', 'pb_book_value', 'operating_margin',
-    'stocks(name,industry,market)',
+    'stocks!inner(name,industry,market)',   // inner join 以套用下市過濾
   ].join(',')
 
   // 逐頁取到底，不寫死批次數（全市場已達 2238 支，原本寫死兩批會漏掉尾端）。
@@ -89,6 +93,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     const { data: page, error } = await db.from('valuations')
       .select(fields)
       .gt('current_price', 0)
+      .is('stocks.delisted_at', null)
       .order('stock_id')
       .range(offset, offset + PAGE - 1)
     // 故障要拋出，不可吞成空清單（同 fetchModel）
