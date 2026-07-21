@@ -135,7 +135,7 @@ def load_all() -> dict:
         "eps":       _cached("eps",       lambda: _paged("eps_quarterly", "stock_id,quarter_end_date,eps", "stock_id")),
         "bvps":      _cached("bvps",      lambda: _paged("balance_sheet_quarterly",
                                                          "stock_id,quarter_end_date,book_value_per_share", "stock_id")),
-        "dividends": _cached("dividends", lambda: _paged("dividends", "stock_id,ex_date,cash_dividend", "stock_id")),
+        "dividends": _cached("dividends", lambda: _paged("dividends", "stock_id,ex_date,cash_dividend,stock_dividend", "stock_id")),
     }
 
 
@@ -163,8 +163,11 @@ def adjusted_price_matrix(prices: pd.DataFrame, dividends: pd.DataFrame,
     月末還原價矩陣（列＝月末日、欄＝股票）。
     還原用真實除息日與股利，但基準收盤價以月末價近似（見檔頭「月採樣近似」）。
     """
-    ex_map = {sid: list(zip(g["ex_date"], g["cash_dividend"]))
-              for sid, g in dividends.dropna(subset=["cash_dividend"]).groupby("stock_id")}
+    # 配股必須一起帶：只還原現金股利會在配股日留下數十個百分點的假跌幅，
+    # 使回測的歷史倍數偏低（見 price_adjust.py 模組說明）
+    div = dividends.fillna({"cash_dividend": 0, "stock_dividend": 0})
+    ex_map = {sid: list(zip(g["ex_date"], g["cash_dividend"], g["stock_dividend"]))
+              for sid, g in div.groupby("stock_id")}
 
     wide = prices.pivot_table(index="date", columns="stock_id", values="close_price")
     wide = wide.reindex(dates)          # 對齊完整月曆，缺月留 NaN（停牌）

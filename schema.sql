@@ -43,13 +43,23 @@ CREATE TABLE IF NOT EXISTS valuations (
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 現金股利紀錄（除息日 + 每股現金股利）
+-- 除權息紀錄（除權息日 + 每股現金股利 + 每股股票股利）
 CREATE TABLE IF NOT EXISTS dividends (
   stock_id      VARCHAR(10)    NOT NULL REFERENCES stocks(stock_id) ON DELETE CASCADE,
-  ex_date       DATE           NOT NULL,            -- 除息基準日
+  ex_date       DATE           NOT NULL,            -- 除權或除息基準日
   cash_dividend DECIMAL(10, 4) NOT NULL DEFAULT 0,  -- 每股現金股利（元）
   PRIMARY KEY (stock_id, ex_date)
 );
+
+-- 每股股票股利（配股，元）。除權會讓股價機械性下跌，不還原就會被當成估值變化。
+--
+-- 2026-07-22 發現：原本只抓現金股利，配股造成的除權從未被還原。
+-- 實例 1436：2025-07-25 原始單日跌 32.9%（台股漲跌幅上限 10%，超過必為除權息），
+-- 以現金股利還原後【仍有 −26.7% 跳空】——那是配股 3.01 元造成的。
+-- 影響 1,790 支（74%）：近 10 年配過股 1,310 支、減資過 480 支。
+-- 未還原會使歷史倍數偏低 → 目標價偏低 → 現價相對顯得昂貴。
+ALTER TABLE dividends
+  ADD COLUMN IF NOT EXISTS stock_dividend DECIMAL(10, 4) NOT NULL DEFAULT 0;
 
 -- 索引：加速股票名稱搜尋
 CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name);

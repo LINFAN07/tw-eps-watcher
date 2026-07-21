@@ -7,8 +7,23 @@ price_adjust.py — 除權息後向還原（共用純函式）
 
 ## 後向還原
 
-- 每個除息日 d 的還原因子 factor_d = 1 − 現金股利 / 除息前一交易日收盤價。
+- 每個除權息日 d 的還原因子，即當日的「除權息參考價 ÷ 前一交易日收盤價」：
+
+      factor_d = (前收盤 − 現金股利) ÷ (前收盤 × (1 + 股票股利 ÷ 10))
+
+  分子處理除息、分母處理除權（配股率 = 股票股利 ÷ 10，面額 10 元）。
 - adjusted(t) = close(t) × ∏ factor_d（對所有 ex_date d > t）。
+
+**2026-07-22 修正：配股（除權）先前完全沒有還原。**
+實例 1436：2025-07-25 原始單日跌 32.9%（台股漲跌幅上限 10%，超過必為除權息），
+只用現金股利還原後【仍有 −26.7% 跳空】，那是配股 3.0143 元造成的。
+驗證：(116 − 9.7965) ÷ (1 + 3.0143/10) = 81.60，與該日走勢相符。
+影響 1,790 支（74%）——近 10 年配過股 1,310 支、減資過 480 支。
+未還原會使歷史倍數偏低、目標價偏低，現價因而相對顯得昂貴。
+
+**已知限制**：現金增資（`CashIncreaseSubscriptionRate`）與減資尚未納入。
+前者股東須自行認購、對每股價值的影響取決於認購價；
+後者需區分現金減資與彌補虧損減資，公式不同。兩者都留待後續處理。
 - 錨定今日：最新一日沒有更晚的除息日，factor 連乘為 1，故 adjusted 最新一日
   == close 最新一日——現價與現在的本益比不變，只有歷史被還原下移。
 
@@ -20,27 +35,34 @@ import bisect
 
 
 def back_adjust(dates: list[str], closes: list[float],
-                ex_list: list[tuple[str, float]]) -> list[float]:
+                ex_list: list[tuple[str, float, float]]) -> list[float]:
     """
     後向還原。回傳與 dates 對齊的還原價陣列（純函式，可單元測試）。
 
-    dates 須為升冪的 ISO 日期字串。ex_list 為 (除息日, 現金股利)。
-    只採計「除息日 ≤ 最後交易日」且能取得除息前收盤價者，確保最新一日 factor=1。
+    dates 須為升冪的 ISO 日期字串。
+    ex_list 為 (除權息日, 現金股利, 股票股利)——股票股利不可省略，
+    只還原現金股利會在配股日留下數十個百分點的假跌幅（見模組說明）。
+
+    只採計「除權息日 ≤ 最後交易日」且能取得前一交易日收盤價者，
+    確保最新一日 factor=1（現價不被改動）。
     """
     if not dates:
         return []
     last_date = dates[-1]
 
-    # 每個除息日的還原因子，用除息前一交易日收盤價當基準
+    # 每個除權息日的還原因子，用前一交易日收盤價當基準
     factors: list[tuple[str, float]] = []
-    for ex_date, cash in ex_list:
-        if cash is None or cash <= 0 or ex_date > last_date:
+    for ex_date, cash, stock in ex_list:
+        cash = cash or 0.0
+        stock = stock or 0.0
+        if (cash <= 0 and stock <= 0) or ex_date > last_date:
             continue
         i = bisect.bisect_left(dates, ex_date)   # 第一個 >= ex_date 的位置
         if i == 0:
-            continue                             # 除息日早於所有股價，無基準可算
-        prev_close = closes[i - 1]               # 除息前最後一個交易日收盤價
-        f = 1.0 - cash / prev_close
+            continue                             # 除權息日早於所有股價，無基準可算
+        prev_close = closes[i - 1]               # 前一交易日收盤價
+        # 除權息參考價 ÷ 前收：分子除息、分母除權（配股率 = 股票股利 ÷ 10）
+        f = (prev_close - cash) / (prev_close * (1 + stock / 10))
         if f <= 0 or f > 1:
             continue                             # 股利 ≥ 前收（資料異常），跳過該筆
         factors.append((ex_date, f))

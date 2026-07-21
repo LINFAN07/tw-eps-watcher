@@ -88,11 +88,17 @@ def fetch_all_stocks() -> list[dict]:
     return all_rows
 
 
-def fetch_dividends(stock_id: str) -> list[tuple[str, float]]:
-    """該股現金股利 (除息日, 每股股利)，供即時還原用"""
-    rows = _fetch_paged("dividends", {"stock_id": stock_id}, "ex_date,cash_dividend")
-    return [(r["ex_date"], float(r["cash_dividend"]))
-            for r in rows if r.get("cash_dividend") is not None]
+def fetch_dividends(stock_id: str) -> list[tuple[str, float, float]]:
+    """
+    該股除權息 (除權息日, 現金股利, 股票股利)，供即時還原用。
+    配股必須一起取——只還原現金股利會在配股日留下數十個百分點的假跌幅。
+    注意：殖利率模型（calculate_yield）另行只取現金股利，那是刻意的，
+    殖利率的本質是現金報酬，不該把配股計入。
+    """
+    rows = _fetch_paged("dividends", {"stock_id": stock_id},
+                        "ex_date,cash_dividend,stock_dividend")
+    return [(r["ex_date"], float(r["cash_dividend"] or 0), float(r.get("stock_dividend") or 0))
+            for r in rows]
 
 
 def fetch_prices(stock_id: str) -> pd.DataFrame:

@@ -53,31 +53,53 @@ def fetch_all_stock_ids() -> list[str]:
     return all_ids
 
 
+def _amount(row: dict, *fields: str) -> float:
+    """把多個金額欄位加總；缺值或非數字視為 0"""
+    total = 0.0
+    for f in fields:
+        try:
+            total += float(row.get(f, 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
 def download_stock_dividends(stock_id: str) -> int:
-    """下載單支股票的股利，回傳寫入筆數"""
+    """
+    下載單支股票的除權息，回傳寫入筆數。
+
+    現金股利與股票股利【各有自己的除權息交易日】，且未必同一天
+    （只除息、只除權、或分開進行都存在），因此分別依各自的日期記錄。
+
+    股票股利同樣會讓股價機械性下跌，必須納入還原：
+    參考價 =（前收盤 − 現金股利）÷（1 + 配股率），配股率 = 股票股利 ÷ 10。
+    實測 1436：(116 − 9.7965) ÷ (1 + 3.0143/10) = 81.60，與當日走勢相符。
+    """
     raw = finmind_get("TaiwanStockDividend", stock_id, START_DATE)
     if not raw:
         return 0
 
-    # 依除息日合併加總（同一除息日可能有多筆：盈餘分配 + 法定盈餘公積）
-    by_date: dict[str, float] = {}
+    # 同一天可能有多筆（盈餘分配 + 法定盈餘公積分開列），故依日期累加
+    by_date: dict[str, dict[str, float]] = {}
+
+    def add(date_str: str, key: str, value: float):
+        if not date_str or value <= 0:
+            return
+        by_date.setdefault(date_str, {"cash": 0.0, "stock": 0.0})[key] += value
+
     for r in raw:
-        ex_date = r.get("CashExDividendTradingDate", "").strip()
-        if not ex_date:
-            continue  # 純除權（配股）或無現金股利，跳過
-        try:
-            cash_div = float(r.get("CashEarningsDistribution", 0) or 0) \
-                     + float(r.get("CashStatutorySurplus", 0) or 0)
-        except (TypeError, ValueError):
-            cash_div = 0.0
-        if cash_div > 0:
-            by_date[ex_date] = by_date.get(ex_date, 0.0) + cash_div
+        add((r.get("CashExDividendTradingDate") or "").strip(), "cash",
+            _amount(r, "CashEarningsDistribution", "CashStatutorySurplus"))
+        add((r.get("StockExDividendTradingDate") or "").strip(), "stock",
+            _amount(r, "StockEarningsDistribution", "StockStatutorySurplus"))
 
     if not by_date:
         return 0
 
     rows = [
-        {"stock_id": stock_id, "ex_date": d, "cash_dividend": round(v, 4)}
+        {"stock_id": stock_id, "ex_date": d,
+         "cash_dividend": round(v["cash"], 4),
+         "stock_dividend": round(v["stock"], 4)}
         for d, v in by_date.items()
     ]
     supabase.table("dividends").upsert(rows, on_conflict="stock_id,ex_date").execute()
@@ -117,7 +139,7 @@ def main():
         time.sleep(CALL_INTERVAL)
 
     print(f"\n✅ 完成，共寫入 {written_total} 筆股利資料")
-    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
+    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
 
 if __name__ == "__main__":

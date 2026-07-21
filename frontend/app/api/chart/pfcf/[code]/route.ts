@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
-import { adjustedMap } from '@/lib/priceAdjust'
+import { adjustedMap, type ExEvent } from '@/lib/priceAdjust'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
   const all: { date: string; close_price: number }[] = []
@@ -116,8 +116,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
 
   // 除權息即時還原：用全日序列 + 股利算「日期→還原價」
   const { data: divRows } = await db.from('dividends')
-    .select('ex_date,cash_dividend').eq('stock_id', code)
-  const exList: [string, number][] = (divRows ?? []).map(d => [d.ex_date, Number(d.cash_dividend)])
+    .select('ex_date,cash_dividend,stock_dividend').eq('stock_id', code)
+  // 配股必須一起帶：只還原現金股利會在配股日留下數十個百分點的假跌幅
+  const exList: ExEvent[] = (divRows ?? []).map(d =>
+    [d.ex_date, Number(d.cash_dividend ?? 0), Number(d.stock_dividend ?? 0)])
   const adjMap = adjustedMap(prices, exList)
 
   const byMonth: Record<string, typeof prices[0]> = {}
