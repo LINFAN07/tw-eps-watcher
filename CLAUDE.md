@@ -123,6 +123,7 @@ tw-eps-watcher/
 | `calculate_alt_valuations.py` | P/B / P/S / P/FCF 三種替代模型，更新 valuations 的對應欄位 |
 | `daily_price_update.py` | 每日收盤後更新 daily_prices 與 valuations.current_price |
 | `quarterly_eps_update.py` | 財報季更新 eps_quarterly，重算 P/E 估值 |
+| `backtest_valuation.py` | 估值訊號回測（驗證「便宜」是否真的賺）。**不掛排程**，需要重驗時手動跑；輸出 `backtest_results/` 與前端用的 `frontend/lib/backtestStats.ts` |
 
 ### FinMind 速率限制
 
@@ -185,6 +186,13 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 | `CheapLeaderboard` | 便宜股排行榜（Server Component + 客戶端篩選） |
 | `MarketThermometer` | 市場溫度計（全市場估值分布） |
 | `WatchlistButton/Panel` | 自選股（localStorage） |
+
+### 回測實績的呈現（lib/backtest.ts）
+
+`/backtest` 是「模型體檢報告」頁；`ValuationCard` 與排行榜會就地顯示該模型在該產業的
+歷史實績，用意是不讓「便宜」被讀成「買了會賺」。資料來自
+`lib/backtestStats.ts`（由 Python 腳本產生，勿手改），**只有 P/E 與 P/B 回測過**，
+P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替。
 
 ### 股票詳情頁區塊順序（app/stock/[code]/page.tsx）
 

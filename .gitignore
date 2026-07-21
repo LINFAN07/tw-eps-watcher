@@ -8,6 +8,10 @@ scripts/init_progress.json
 # 執行日誌（本機暫存，不需版控）
 logs/
 
+# 回測快取與逐筆訊號明細（可重跑產生，signals.csv 約 8MB，不進版控）
+.backtest_cache/
+backtest_results/signals.csv
+
 # Python
 __pycache__/
 *.pyc

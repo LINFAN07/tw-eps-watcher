@@ -1,4 +1,5 @@
 import { Suspense } from 'react'
+import Link from 'next/link'
 import SearchBox from '@/components/SearchBox'
 import CheapLeaderboard from '@/components/CheapLeaderboard'
 import WatchlistPanel from '@/components/WatchlistPanel'
@@ -44,10 +45,15 @@ export default function Home() {
 
       {/* 便宜股排行榜 */}
       <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <span className="w-2 h-5 bg-green-500 rounded-full inline-block" />
-          目前被低估的股票
-        </h2>
+        <div className="flex items-baseline justify-between mb-4 gap-2 flex-wrap">
+          <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+            <span className="w-2 h-5 bg-green-500 rounded-full inline-block" />
+            目前被低估的股票
+          </h2>
+          <Link href="/backtest" className="text-xs text-blue-600 hover:underline">
+            這些訊號準不準？看模型體檢報告 →
+          </Link>
+        </div>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <Suspense fallback={<p className="text-gray-400 text-sm">載入中...</p>}>
             <CheapLeaderboard />

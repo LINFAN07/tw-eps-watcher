@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { isPeUnreliable } from '@/lib/peReliability'
+import { getTrackRecord, type Tone } from '@/lib/backtest'
 
 interface EpsQuarter {
   quarter_end_date: string
@@ -98,6 +100,13 @@ const FINANCE_INDUSTRIES = /銀行|保險|證券|金融/
 function getDebtTier(ratio: number, industry?: string | null) {
   const tiers = FINANCE_INDUSTRIES.test(industry ?? '') ? DEBT_TIERS_FINANCE : DEBT_TIERS_GENERAL
   return tiers.find(t => ratio >= t.min)!
+}
+
+// 回測實績的呈現強度：價值陷阱要看得見，表現好的不必喧賓奪主
+const TONE_STYLE: Record<Tone, { icon: string; box: string }> = {
+  bad:     { icon: '🪤', box: 'bg-red-50 border-red-200 text-red-800' },
+  good:    { icon: '📈', box: 'bg-green-50 border-green-200 text-green-800' },
+  neutral: { icon: '📊', box: 'bg-gray-50 border-gray-200 text-gray-600' },
 }
 
 const statusStyle: Record<string, { bg: string; text: string; label: string }> = {
@@ -224,6 +233,9 @@ export default function ValuationCard({
   const debtTier = (v.debt_ratio != null)
     ? getDebtTier(v.debt_ratio, industry)
     : null
+
+  // 目前模型在本產業的歷史實績（只有 P/E、P/B 回測過，其餘回傳 null 不顯示）
+  const track = getTrackRecord(active, industry)
 
   const prevTTM = prevYearQuarters.length === 4
     ? prevYearQuarters.reduce((s, q) => s + q.eps, 0)
@@ -368,6 +380,19 @@ export default function ValuationCard({
           </span>
         )}
       </div>
+
+      {/* 此模型在本產業的歷史實績。放在目標價正下方而非另闢頁面，
+          是因為「便宜」若不配上「便宜之後發生了什麼」，很容易被讀成「買了會賺」。*/}
+      {track && (
+        <div className={`mt-4 rounded-xl border px-4 py-3 text-xs ${TONE_STYLE[track.tone].box}`}>
+          <span className="mr-1">{TONE_STYLE[track.tone].icon}</span>
+          <span className="font-semibold">歷史實績</span>
+          <span className="ml-1.5">{track.verdict}</span>
+          <Link href="/backtest" className="ml-1 underline underline-offset-2 hover:opacity-70">
+            模型體檢報告
+          </Link>
+        </div>
+      )}
 
       {/* 品質指標列（固定顯示，不隨 Tab 切換）*/}
       {(roeTier != null || marginTier != null || debtTier != null) && (

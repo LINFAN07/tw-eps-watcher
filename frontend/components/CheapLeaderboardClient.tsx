@@ -1,6 +1,7 @@
 'use client'
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
+import { getTrackRecord, getWorstTrackRecord } from '@/lib/backtest'
 
 export interface LeaderboardRow {
   stock_id: string
@@ -37,6 +38,17 @@ const MODEL_META: Record<Model, { label: string; desc: string }> = {
 // 金融相關產業（無營業利益率，豁免利益率篩選）
 const FINANCIAL_KEYWORDS = ['金融', '保險', '銀行', '證券']
 
+function isKYStock(row: LeaderboardRow): boolean {
+  return row.stocks?.name?.includes('-KY') ?? false
+}
+
+// 預設排除 KY 股的依據（回測，持有 12 個月）：KY 母體報酬中位數 −5.1%、正報酬率 43.2%，
+// 而非 KY 母體是 +4.1%、56.2%。便宜訊號在 KY 股上仍有效（超額 +3.2pp，與非 KY 相當），
+// 但救不回負的絕對報酬。且已下市的 KY 股早被移出 stocks 表，真實情況只會更差。
+// 做成可關閉的開關而非硬性移除：這是族群統計，不是對個別公司的判決。
+const KY_TOOLTIP = '此族群歷史報酬中位數 −5.1%（同期非 KY 為 +4.1%），正報酬率僅 43.2%。'
+  + '便宜訊號在 KY 股上一樣有效，但拉不回負的絕對報酬。關閉此篩選即可看到它們。'
+
 // 從 TTM EPS 和每股淨值推算 ROE（EPS 為負時回傳負 ROE；淨值為負時分母無意義，回傳 null）
 function calcRoe(row: LeaderboardRow): number | null {
   if (row.ttm_eps != null && row.pb_book_value != null && row.pb_book_value > 0) {
@@ -59,6 +71,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
   const [industry, setIndustry]         = useState<string>('全部')
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
   const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
+  const [excludeKY, setExcludeKY]       = useState(true)   // 排除 KY 股（見 KY_TOOLTIP）
 
   const rows = data[model]
 
@@ -77,6 +90,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
     // 永久排除虧損股：估值帶對虧損股無意義，不受品質篩選開關影響
     .filter(r => !((r.roe != null && r.roe < 0) || (r.operating_margin != null && r.operating_margin < 0)))
     .filter(r => industry === '全部' || (r.stocks?.industry || '其他') === industry)
+    .filter(r => !excludeKY    || !isKYStock(r))
     .filter(r => !filterRoe    || (r.roe ?? 0) >= 15)
     .filter(r => {
       if (!filterMargin) return true
@@ -131,6 +145,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         <span className="text-xs text-gray-400">品質篩選</span>
         <QualityToggle active={filterRoe}    onClick={() => setFilterRoe(v => !v)}    label="ROE ≥ 15%" />
         <QualityToggle active={filterMargin} onClick={() => setFilterMargin(v => !v)} label="利益率 ≥ 10%" />
+        <QualityToggle active={excludeKY}    onClick={() => setExcludeKY(v => !v)}    label="排除 KY 股" title={KY_TOOLTIP} />
       </div>
 
       {/* 多模型共識說明 */}
@@ -163,13 +178,18 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
             <tbody>
               {displayRows.map((r, i) => {
                 const discount = (((r.cheap_price - r.current_price) / r.cheap_price) * 100).toFixed(1)
-                const isKY = r.stocks?.name?.includes('-KY') ?? false
+                const isKY = isKYStock(r)
                 const isTopQuality = r.roe != null && r.roe >= 15
                   && r.operating_margin != null && r.operating_margin >= 10
                 // KY 股帳上現金不可驗證，不適用潛力黑馬推論
                 const isPotential = !isKY && !isTopQuality
                   && r.operating_margin != null && r.operating_margin >= 10
                   && r.roe != null && r.roe >= 0
+                // 回測顯示此模型在該產業的便宜訊號長期落後同業 → 標記為價值陷阱。
+                // 只標警示不標好消息：避免徽章泛濫，也因為「別接刀」比「可以買」更該講。
+                const trap = model === 'consensus'
+                  ? getWorstTrackRecord(r.models, r.stocks?.industry)
+                  : getTrackRecord(model, r.stocks?.industry)
                 return (
                   <tr key={r.stock_id} className="border-b border-gray-50 transition-colors hover:bg-gray-50">
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
@@ -214,6 +234,14 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                         <div className="text-[10px] text-orange-600 mt-0.5">
                           帳上現金難以驗證，請留意海外資產真實性
                         </div>
+                      )}
+                      {trap?.tone === 'bad' && (
+                        <span
+                          title={trap.verdict}
+                          className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 font-medium leading-tight mt-0.5 cursor-help"
+                        >
+                          🪤 產業陷阱 {trap.excess.toFixed(1)}pp
+                        </span>
                       )}
                     </td>
                     <td className="py-3 pr-4 text-gray-400 hidden md:table-cell">
@@ -267,14 +295,16 @@ function FilterBar({ industries, selected, onSelect }: {
   )
 }
 
-function QualityToggle({ active, onClick, label }: {
+function QualityToggle({ active, onClick, label, title }: {
   active: boolean
   onClick: () => void
   label: string
+  title?: string
 }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       className={`text-xs px-3 py-1 rounded-full border transition-colors font-medium ${
         active
           ? 'bg-green-600 text-white border-green-600'
