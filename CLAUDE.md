@@ -249,30 +249,14 @@ P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替�
 
 ## 常見陷阱
 
-- **Supabase 分頁**：預設 1000 筆上限，所有查詢必須用 `range()` 分頁（參考 `_fetch_paged()`）。
-  分頁時務必加 `order()`：無排序的多次查詢，Postgres 不保證跨頁順序一致，會重複或遺漏。
-- **FinMind 欄位名稱不一致**：各資料集用 `--discover` 模式驗證後再寫入（尤其現金流量表）
-- **時區**：前端一律用 `Asia/Taipei`，Python 腳本用 `datetime.today()` 即台北時間
-- **listed_shares 單位**：千股。每股數值一律為 `元 ÷ (listed_shares × 1000)`
-- **現金流量表是「年度累計」**：台灣財報的現金流量表逐季累加、每年 Q1 重置
-  （台積電 2025：0.63→1.12→1.55→2.27 兆）。算 TTM 前**必須先還原單季**
-  （`calculate_alt_valuations.decumulate()`），直接加總會高估約 2.5 倍。
-  **EPS 與損益表則是單季值**，不可一併處理——FinMind 兩者行為不同。
-- **金融股財報格式不同**：金控／保險／證券期貨業的會計科目與一般業不同
-  （無 `EquityAttributableToOwnersOfParent`、`CapitalStock`），
-  交易所 OpenAPI 亦分行業別提供端點（`_ci` 一般業／`_fh` 金控／`_ins` 保險…）。
-  只抓 `_ci` 會漏掉全部金控股。
-- **P/FCF 負值**：FCF 為負時跳過（不納入百分位計算，也不顯示目標價）
-- **Next.js 15 params**：`params` 是 `Promise<{code: string}>`，必須 `await params`
+> 依「踩到會發生什麼事」分四組。第一組寫錯就是髒資料，優先讀。
+
+### 一、日期與單位（寫錯＝髒資料，全部有事故紀錄）
+
 - **民國年一律先 +1911 轉西元** 再組日期。交易所 OpenAPI 的 `年度`/`Year` 是民國
   （115），直接組成 `f"{115}-03-31"` 會寫出公元 115 年的日期。
   屬「不得寫錯誤日期」原則的一環。**2026-07 事故**：`backfill_eps_from_income.py`
   漏轉，寫入 1121 筆 `0115-03-31` 髒資料。
-- **交易所 OpenAPI 欄名 TWSE 中文、TPEx 英文**：TWSE 用 `年度`/`季別`/`公司代號`，
-  TPEx（上櫃、興櫃）用 `Year`/`Season`/`SecuritiesCompanyCode`。只比對中文欄名，
-  上櫃/興櫃會整批被跳過（884 家收 0 筆）。跨市場處理務必兩種欄名都取。
-- **不可只查單一來源就斷定「補不了」**：金控 Q1 EPS 先誤判「FinMind 沒有 → 資料限制」，
-  實際 TWSE 綜合損益表 OpenAPI 有官方基本每股盈餘。呼應「跨來源比對」原則。
 - **單季值與年度值不可混用**：`eps_quarterly.eps` 是單季，`ttm_eps` 是四季加總。
   兩者都是「合理的數字」，混用不會報錯、內部一致性檢查也全部通過。
   **2026-07-21 事故**：`compute_normalized_eps()` 回傳單季 EPS 平均，卻被當年度值
@@ -280,6 +264,29 @@ P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替�
   全市場 633 檔（含台積電、聯發科、儒鴻）被誤標「獲利高峰、P/E 不可信」，
   連帶被踢出便宜排行榜與推薦模型；修正後剩 20 檔。修法是在 `compute_normalized_eps()`
   回傳前乘上 TTM 期數（季報 4／半年報 2），下游門檻常數本就以年度為基準，不必改。
+- **listed_shares 單位**：千股。每股數值一律為 `元 ÷ (listed_shares × 1000)`
+- **時區**：前端一律用 `Asia/Taipei`，Python 腳本用 `datetime.today()` 即台北時間
+- **現金流量表是「年度累計」**：台灣財報的現金流量表逐季累加、每年 Q1 重置
+  （台積電 2025：0.63→1.12→1.55→2.27 兆）。算 TTM 前**必須先還原單季**
+  （`calculate_alt_valuations.decumulate()`），直接加總會高估約 2.5 倍。
+  **EPS 與損益表則是單季值**，不可一併處理——FinMind 兩者行為不同。
+
+### 二、資料來源的個性差異
+
+- **交易所 OpenAPI 欄名 TWSE 中文、TPEx 英文**：TWSE 用 `年度`/`季別`/`公司代號`，
+  TPEx（上櫃、興櫃）用 `Year`/`Season`/`SecuritiesCompanyCode`。只比對中文欄名，
+  上櫃/興櫃會整批被跳過（884 家收 0 筆）。跨市場處理務必兩種欄名都取。
+- **金融股財報格式不同**：金控／保險／證券期貨業的會計科目與一般業不同
+  （無 `EquityAttributableToOwnersOfParent`、`CapitalStock`），
+  交易所 OpenAPI 亦分行業別提供端點（`_ci` 一般業／`_fh` 金控／`_ins` 保險…）。
+  只抓 `_ci` 會漏掉全部金控股。
+- **FinMind 欄位名稱不一致**：各資料集用 `--discover` 模式驗證後再寫入（尤其現金流量表）
+- **不可只查單一來源就斷定「補不了」**：金控 Q1 EPS 先誤判「FinMind 沒有 → 資料限制」，
+  實際 TWSE 綜合損益表 OpenAPI 有官方基本每股盈餘。呼應「跨來源比對」原則。
+
+### 三、模型與旗標的判讀
+
+- **P/FCF 負值**：FCF 為負時跳過（不納入百分位計算，也不顯示目標價）
 - **旗標覆蓋率異常＝旗標本身壞了**：布林旗標／警告欄位上線後先查覆蓋率，
   極端值（>50% 或 <1%）先假設是程式錯，不要當成市場現象。
   上面那次事故就是查「`pe_reliable=false` 佔 60%」才發現的。
@@ -290,3 +297,16 @@ P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替�
   等於隨機挑股；獲利谷底組（TTM < 均值 30%）0.95%，比隨機挑股還差。
   已由 `valuations.pe_reliable` 生成欄位排除出排行榜與推薦模型（見 `schema.sql`），
   個股頁仍照常顯示——那是查詢不是推薦。
+- **下市股會往榜首跑**：價格凍結在最後一個交易日，目標價卻仍隨財報更新，
+  折價因此越算越誇張。2026-07-21 實測 120 檔已下市（4.9%），佔據 P/E 便宜榜前 6 名中 4 名。
+  一律以 `stocks.delisted_at is null` 過濾（由 `daily_price_update.mark_delisted()` 每日維護）。
+  判斷「停更」是否等於「下市」務必跨來源問交易所名單——同日集中停更很像漏抓。
+
+### 四、平台限制
+
+- **Supabase 分頁**：預設 1000 筆上限，所有查詢必須用 `range()` 分頁（參考 `_fetch_paged()`）。
+  分頁時務必加 `order()`：無排序的多次查詢，Postgres 不保證跨頁順序一致，會重複或遺漏。
+- **Supabase upsert 會先試 INSERT**：只帶主鍵與少數欄位的 upsert，會在衝突解析【之前】
+  就違反其他欄位的 NOT NULL 約束（`stocks.name`）。更新既有列請用
+  `.update().in_("stock_id", chunk)` 分批，不要用 upsert。
+- **Next.js 15 params**：`params` 是 `Promise<{code: string}>`，必須 `await params`
