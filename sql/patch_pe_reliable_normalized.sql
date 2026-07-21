@@ -26,5 +26,7 @@ ALTER TABLE valuations
     )
   ) STORED;
 
--- 驗證：執行後應為 false ≈ 804（原 765 + 常態化分支 39）
+-- 實測結果：執行後 false = 989 / 2448（原 765）。
+-- 增加的 224 檔是「走常態化分支的 296 檔」扣掉本來就因其他警告被標 false 的重疊部分，
+-- 不只是當下判定便宜的那 39 檔——旗標本身標記的是模型失真，與當前狀態無關。
 -- SELECT pe_reliable, count(*) FROM valuations GROUP BY pe_reliable;
