@@ -144,6 +144,16 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/patch_capital_change_warning.py
 
+      # 業外收支偵測：讀 income_statement_quarterly，比對營業利益 vs 稅後淨利，
+      # 標記獲利主要來自業外（賣祖產）的公司。排行榜會依此欄排除股票。
+      # 2026-07-21 補掛：此腳本先前不在任何 workflow，nonop_warning 自一次性回填後
+      # 就再也沒更新，新出現的業外虛胖不會被標記、已改善的也不會解除。
+      - name: 偵測業外收支（valuations.nonop_warning）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/patch_nonop_warning.py
+
       - name: 排程失敗 Email 通知
         if: failure()
         uses: dawidd6/action-send-mail@v3

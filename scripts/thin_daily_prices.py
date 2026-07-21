@@ -20,8 +20,9 @@
 import argparse
 import os
 import sys
+from calendar import monthrange
+from datetime import date
 
-import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -48,8 +49,16 @@ def latest_trading_date() -> str:
 
 
 def cutoff_date(latest: str) -> str:
-    """latest 往前推 KEEP_DAILY_MONTHS 個月（純日期運算，不碰系統時間）"""
-    return str((pd.Timestamp(latest) - pd.DateOffset(months=KEEP_DAILY_MONTHS)).date())
+    """
+    latest 往前推 KEEP_DAILY_MONTHS 個月（純日期運算，不碰系統時間）。
+    用標準庫而非 pandas：這支腳本要掛進 workflow，
+    為了一行日期運算讓 CI 多裝 pandas 不划算。
+    """
+    d = date.fromisoformat(latest)
+    m = d.month - KEEP_DAILY_MONTHS
+    y, m = d.year + (m - 1) // 12, (m - 1) % 12 + 1
+    # 若目標月沒有該日（例如 5/31 往前推到 2/31），退到當月最後一天
+    return str(d.replace(year=y, month=m, day=min(d.day, monthrange(y, m)[1])))
 
 
 def all_stock_ids() -> list[str]:

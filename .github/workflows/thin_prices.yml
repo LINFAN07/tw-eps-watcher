@@ -1,0 +1,58 @@
+name: 股價週採樣瘦身
+
+on:
+  schedule:
+    # 台灣時間每月 21 日 04:00（UTC 20 日 20:00）。
+    # 刻意避開每月 1 日（新股發現）與 11 日（月營收），也避開每日收盤更新時段。
+    #
+    # 為什麼要定期跑：瘦身保留「近 3 個月每日」，這個窗口會隨時間往前滾動，
+    # 每個月會多出約一個月份的每日資料需要降為週採樣。不定期執行，
+    # 容量就會以每年約 50MB 的速度重新長回來。
+    - cron: '0 20 20 * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  thin:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install supabase python-dotenv
+
+      # 需資料庫已存在 thin_daily_prices() 函式（sql/thin_daily_prices.sql）。
+      # 刪除後不執行 VACUUM：PostgREST 無法執行 VACUUM，且每月刪除量約 5 萬列，
+      # autovacuum 會自動回收為可重用空間。切勿改成 VACUUM FULL——
+      # 它需要約 252MB 暫存空間，在容量吃緊時必定失敗（見 sql/thin_daily_prices.sql）。
+      - name: 週採樣瘦身
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/thin_daily_prices.py
+
+      - name: 排程失敗 Email 通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 股價週採樣瘦身失敗"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            股價週採樣瘦身排程執行失敗，請至以下連結查看錯誤日誌：
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            注意：瘦身未執行不會立即造成問題，但容量會以每年約 50MB 的速度
+            重新增長。請確認資料庫是否已建立 thin_daily_prices() 函式。
