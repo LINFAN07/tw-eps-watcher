@@ -105,11 +105,7 @@ export default async function ReportPage() {
 
       {!date ? (
         <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-sm text-gray-500">
-          <p className="mb-2">尚無變動記錄。</p>
-          <p className="text-xs">
-            狀態變動由每日收盤更新時比對產生，需在資料庫建立 <code>status_changes</code> 表
-            （見 <code>schema.sql</code>），並等待下一個交易日的更新。
-          </p>
+          尚無變動記錄，第一批資料會在下一個交易日收盤後產生。
         </div>
       ) : changes.length === 0 ? (
         <p className="text-gray-400 text-sm">這個交易日沒有任何股票的估值狀態改變。</p>
