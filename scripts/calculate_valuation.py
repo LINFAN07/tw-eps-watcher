@@ -28,6 +28,13 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 PE_CHEAP, PE_FAIR, PE_EXPENSIVE = 20, 50, 80
 PE_MIN,   PE_MAX                = 3, 200
 
+# 建立 P/E 百分位帶所需的最少樣本數。序列改為週採樣後（見 to_weekly），
+# 40 點 = 40 週 ≈ 10 個月；先前是 40 個交易日 ≈ 2 個月。
+# 門檻等於收緊 5 倍，會使 31 支上市未滿 10 個月的新股改為「無法計算」——
+# 這是刻意的：用不到一年的價格算出來的百分位帶不具參考性，
+# 其中 18 支原本顯示「便宜」，比沒有估值更容易誤導。
+MIN_PE_SAMPLES = 40
+
 
 def _fetch_paged(table, filters: dict, columns: str) -> list:
     """分頁取得 Supabase 資料（繞過 1000 筆上限），以第一個欄位排序"""
@@ -90,8 +97,30 @@ def _eps_window(eps_df: pd.DataFrame) -> int:
     return 2 if months.issubset({6, 12}) else 4
 
 
+def to_weekly(price_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    把價格序列統一降成「每週最後一個交易日」。
+
+    為什麼要在計算時再降一次，而不是資料庫裡有什麼就用什麼：
+    daily_prices 為了看門狗、現價判定與跨來源比對，會保留近 3 個月的每日資料，
+    更早則只留每週最後一個交易日（容量所需）。若直接混用這兩種密度，
+    近 3 個月的點在 P/E 序列中的權重會被放大約 5 倍，整條估值帶被近期價格污染。
+
+    2026-07-21 實測（台積電）：近期保日 + 早期週採樣使 P/E 中位數偏高 7.6%，
+    長榮 33.8%、大田 18.9%，且有股票的便宜/合理/昂貴標籤因此翻轉。
+    統一降成週之後，位移回到中位 0.59%、最大 1.70%。
+
+    對已瘦身的舊資料，這個函式是 no-op（本來就一週一點）；
+    它真正的作用是把近 3 個月的每日資料也拉齊到同一密度。
+    """
+    week = price_df["date"].dt.to_period("W")
+    return (price_df.loc[price_df.groupby(week)["date"].idxmax()]
+                    .sort_values("date").reset_index(drop=True))
+
+
 def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFrame:
-    """用 merge_asof 向量化計算每個交易日的 P/E，取代逐行迴圈"""
+    """用 merge_asof 向量化計算每週的 P/E，取代逐行迴圈"""
+    price_df = to_weekly(price_df)   # 時間權重必須均勻，見 to_weekly
     w = _eps_window(eps_df)
     eps = eps_df.copy()
     eps["ttm_eps"] = eps["eps"].rolling(w, min_periods=w).sum()
@@ -156,7 +185,7 @@ def calculate_valuation(stock_id: str) -> dict | None:
         return None
 
     series = build_pe_series(eps_df, price_df)
-    if len(series) < 40:
+    if len(series) < MIN_PE_SAMPLES:
         return None
 
     cheap_pe, fair_pe, expensive_pe = (

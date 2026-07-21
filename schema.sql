@@ -241,6 +241,16 @@ ALTER TABLE valuations
 -- dividends 即時還原（見 scripts/price_adjust.py 與 frontend/lib/priceAdjust.ts），
 -- 零儲存、零膨脹。故此處【不建】adjusted_close 欄位。
 --
--- 若先前已建過該欄（全為 null、無害），可選擇性移除：
+-- 【2026-07-21 查證訂正】此處原本寫「若先前已建過該欄（全為 null、無害）」——
+-- 那是錯的。該欄不但已建立，而且【已寫入資料】（抽查 2330 有 2,427 筆有值），
+-- 是 compute_adjusted_prices.py 那次啟用留下的。程式碼現已完全不再引用它
+-- （前後端皆改為即時還原），屬死欄位，正在白佔容量：
 --   ALTER TABLE daily_prices DROP COLUMN IF EXISTS adjusted_close;
+--
+-- 注意 DROP COLUMN 的真實效果：Postgres 只把欄位標記為 dropped，
+-- 既有列的資料【不會】歸還磁碟，只有該列被重寫時才釋放。daily_prices 幾乎
+-- 只 INSERT 不 UPDATE，所以舊資料的空間不會自行回收——DROP 的實益是
+-- 阻止未來每日新增的列再帶這一欄。要真正回收需 VACUUM FULL 重寫整張表，
+-- 但那需要約等於表大小的暫存空間，在容量吃緊時反而危險（2026-07-21 實測
+-- 已用 464.6MB / 500MB = 92.9%）。故：先 DROP，回收另行評估。
 -- ─────────────────────────────────────────────────────────
