@@ -6,6 +6,7 @@ import PERiverChart from '@/components/PERiverChart'
 import WatchlistButton from '@/components/WatchlistButton'
 import YieldRiverChart from '@/components/YieldRiverChart'
 import AltRiverChart from '@/components/AltRiverChart'
+import PeerComparison, { type PeerRow } from '@/components/PeerComparison'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -24,6 +25,21 @@ async function latestDate(
   return (data as Record<string, string> | null)?.[dateCol] ?? null
 }
 
+/**
+ * 同產業所有股票的估值基準，供 PeerComparison 計算排名。
+ * 最大產業 262 支（電子工業），不會踩到 Supabase 單次 1000 筆上限，故不需分頁。
+ */
+async function fetchPeers(industry: string | null): Promise<PeerRow[]> {
+  if (!industry) return []
+  const { data, error } = await getSupabase()
+    .from('valuations')
+    .select('stock_id,current_price,ttm_eps,pb_book_value,stocks!inner(industry)')
+    .eq('stocks.industry', industry)
+  // 查詢失敗不可偽裝成「沒有同業」——那會讓整個區塊靜默消失
+  if (error) throw new Error(`讀取同業估值失敗：${error.message}`)
+  return (data ?? []) as unknown as PeerRow[]
+}
+
 async function fetchStock(code: string) {
   const db = getSupabase()
   const [stockRes, valRes, epsRes, priceDate, pbDate, psDate, pfcfDate, yieldDate] = await Promise.all([
@@ -40,9 +56,12 @@ async function fetchStock(code: string) {
     latestDate(db, 'dividends', 'ex_date', code),
   ])
   const eps8 = epsRes.data ?? []
+  // 同業資料要等 stock 查完才知道產業，故獨立於上面的 Promise.all
+  const peers = await fetchPeers(stockRes.data?.industry ?? null)
   return {
     stock: stockRes.data,
     valuation: valRes.data,
+    peers,
     ttmQuarters: eps8.slice(0, 4),
     prevYearQuarters: eps8.slice(4, 8),
     asOf: {
@@ -66,7 +85,7 @@ const statusStyle: Record<string, string> = {
 
 export default async function StockPage({ params }: Props) {
   const { code } = await params
-  const { stock, valuation, ttmQuarters, prevYearQuarters, asOf } = await fetchStock(code)
+  const { stock, valuation, ttmQuarters, prevYearQuarters, asOf, peers } = await fetchStock(code)
 
   if (!stock) notFound()
 
@@ -112,6 +131,17 @@ export default async function StockPage({ params }: Props) {
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border text-gray-400 text-center">
           此股票尚無估值資料（EPS 資料不足 4 季）
         </div>
+      )}
+
+      {/* 同業相對估值：河流圖只比「這支 vs 它自己的歷史」，這裡補上「vs 同業」 */}
+      {stock.industry && peers.length > 0 && (
+        <PeerComparison
+          peers={peers}
+          code={code}
+          industry={stock.industry}
+          ownFairPe={valuation?.fair_pe ?? null}
+          ownFairPb={valuation?.pb_fair_pb ?? null}
+        />
       )}
 
       {/* P/E 河流圖 */}
