@@ -1,7 +1,10 @@
 import Link from 'next/link'
 import { getSupabase } from '@/lib/supabase'
 
-export const revalidate = 3600
+// 這一頁的用途就是回答「資料有多新」，本身不能被快取——
+// ISR 快取 1 小時會讓它報告過期的新鮮度（實測曾在股價已更新後仍顯示前一交易日），
+// 也可能在問題已修復後繼續顯示異常。流量低，每次查詢的成本可以接受。
+export const dynamic = 'force-dynamic'
 
 export const metadata = {
   title: '資料健康狀態 — 台股估值查詢',

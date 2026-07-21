@@ -233,6 +233,28 @@ ALTER TABLE valuations
   ) STORED;
 
 -- ─────────────────────────────────────────────────────────
+-- 每日估值狀態變動記錄（供「每日市場快報」使用）
+--
+-- valuations 只存「當前」狀態、沒有歷史，因此回答不了
+-- 「今天有哪些股票剛跌進便宜區、哪些剛離開」。
+-- 這張表由 daily_price_update.py 在更新狀態時順手比對記錄，只寫【有變化】的筆數，
+-- 每日約數十筆，並由該腳本自動清除保留期以外的舊資料（容量吃緊，不可無限累積）。
+--
+-- date 一律使用【交易所回報的資料日期】，不是系統時間
+-- （資料誠信原則：休市與來源延遲都會讓系統日期與交易日脫節）。
+CREATE TABLE IF NOT EXISTS status_changes (
+  stock_id    VARCHAR(10) NOT NULL REFERENCES stocks(stock_id),
+  date        DATE        NOT NULL,       -- 來源回報的交易日
+  model       VARCHAR(10) NOT NULL,       -- pe / pb / ps / pfcf / yield
+  from_status VARCHAR(10) NOT NULL,       -- 便宜 / 合理 / 昂貴
+  to_status   VARCHAR(10) NOT NULL,
+  PRIMARY KEY (stock_id, date, model)
+);
+-- 主鍵前綴為 stock_id，「查最近一日的所有變動」用不到它，故另建 date 索引。
+-- 這與主鍵沒有功能重疊（曾因重複索引使資料庫暴增 259MB，勿再重蹈）。
+CREATE INDEX IF NOT EXISTS idx_status_changes_date ON status_changes(date DESC);
+
+-- ─────────────────────────────────────────────────────────
 -- 除權息還原：改採「即時計算、不儲存」（2026-07-18）
 --
 -- 原本規劃把後向還原價存進 daily_prices.adjusted_close，但實測那會使更新膨脹，

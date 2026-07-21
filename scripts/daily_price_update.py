@@ -16,7 +16,7 @@ import os
 import sys
 import time
 import requests
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -155,18 +155,22 @@ def upsert_batch(table, rows, batch_size=500):
         supabase.table(table).upsert(rows[i:i + batch_size]).execute()
 
 
-# 各估值模型的 (便宜價欄位, 合理價欄位, 狀態欄位)
+# 各估值模型的 (模型代號, 便宜價欄位, 合理價欄位, 狀態欄位)
 STATUS_MODELS = [
-    ("cheap_price",      "fair_price",      "status"),
-    ("pb_cheap_price",   "pb_fair_price",   "pb_status"),
-    ("ps_cheap_price",   "ps_fair_price",   "ps_status"),
-    ("pfcf_cheap_price", "pfcf_fair_price", "pfcf_status"),
-    ("yield_cheap_price","yield_fair_price","yield_status"),
+    ("pe",    "cheap_price",      "fair_price",      "status"),
+    ("pb",    "pb_cheap_price",   "pb_fair_price",   "pb_status"),
+    ("ps",    "ps_cheap_price",   "ps_fair_price",   "ps_status"),
+    ("pfcf",  "pfcf_cheap_price", "pfcf_fair_price", "pfcf_status"),
+    ("yield", "yield_cheap_price","yield_fair_price","yield_status"),
 ]
 
+# 狀態欄位也要讀回來：比對新舊才能記錄「今天跌進便宜區」的變動（status_changes）
 _STATUS_COLS = "stock_id," + ",".join(
-    col for model in STATUS_MODELS for col in model[:2]
+    col for model in STATUS_MODELS for col in model[1:]
 )
+
+# 狀態變動記錄的保留天數。容量吃緊，不可無限累積
+STATUS_CHANGE_RETENTION_DAYS = 90
 
 
 def judge_status(price: float, cheap, fair) -> str:
@@ -189,10 +193,36 @@ def judge_status(price: float, cheap, fair) -> str:
     return "昂貴"
 
 
-def update_valuations(prices: dict[str, float]):
+def record_status_changes(changes: list[dict], latest_date: str):
+    """
+    寫入狀態變動並清除保留期以外的舊記錄。
+
+    這是附加功能：status_changes 表若尚未建立（schema.sql 未執行），
+    只印警告而不中斷——股價與估值更新才是本工作的核心職責，
+    不該因為快報功能未部署就讓整個每日更新失敗。
+    """
+    if not changes:
+        print("估值狀態變動：0 筆")
+        return
+    try:
+        upsert_batch("status_changes", changes)
+        # 保留期以資料日期回推，不用系統時間（休市時兩者會脫節）
+        cutoff = (date.fromisoformat(latest_date)
+                  - timedelta(days=STATUS_CHANGE_RETENTION_DAYS)).isoformat()
+        supabase.table("status_changes").delete().lt("date", cutoff).execute()
+        print(f"估值狀態變動：{len(changes)} 筆（已清除 {cutoff} 前的記錄）")
+    except Exception as e:
+        print(f"⚠️  狀態變動記錄寫入失敗（不影響股價更新）：{str(e)[:150]}")
+        print("    若尚未建立 status_changes 表，請執行 schema.sql 的對應段落")
+
+
+def update_valuations(prices: dict[str, tuple[str, float]]):
     """
     快速更新估值現價與狀態（P/E + P/B + P/S + P/FCF + 殖利率）。
     只比對現價與既有目標價，不重算歷史區間（那是 calculate_valuation.py 的職責）。
+
+    prices 的值為 (資料日期, 收盤價)：日期用於狀態變動記錄，
+    各市場發布時程不同，必須用該股自己的資料日期而非系統日期。
     """
     sids = list(prices.keys())
     existing = []
@@ -208,21 +238,39 @@ def update_valuations(prices: dict[str, float]):
     # 需明確帶入，否則前端顯示的「最後更新」會永遠停在建置日期。
     now = datetime.now(timezone.utc).isoformat()
 
-    updates = []
+    updates, changes = [], []
     for row in existing:
-        sid   = row["stock_id"]
-        price = prices.get(sid)
+        sid = row["stock_id"]
+        entry = prices.get(sid)
+        if not entry:
+            continue
+        src_date, price = entry
         if not price or price <= 0:
             continue
 
         # 現價一律更新（含虧損股），各模型狀態依其目標價各自判定
         update = {"stock_id": sid, "current_price": round(price, 2), "updated_at": now}
-        for cheap_col, fair_col, status_col in STATUS_MODELS:
-            update[status_col] = judge_status(price, row.get(cheap_col), row.get(fair_col))
+        for model, cheap_col, fair_col, status_col in STATUS_MODELS:
+            new_status = judge_status(price, row.get(cheap_col), row.get(fair_col))
+            update[status_col] = new_status
+
+            # 只記錄「便宜/合理/昂貴」之間的真實移動。
+            # 與「無法計算」互轉是資料狀態改變（財報更新、模型失效），
+            # 不是市場價格造成的變化，混進快報只會製造雜訊。
+            old_status = row.get(status_col)
+            if (old_status and old_status != new_status
+                    and "無法計算" not in (old_status, new_status)):
+                changes.append({
+                    "stock_id": sid, "date": src_date, "model": model,
+                    "from_status": old_status, "to_status": new_status,
+                })
         updates.append(update)
 
     upsert_batch("valuations", updates)
     print(f"估值狀態更新：{len(updates)} 支")
+
+    if updates:
+        record_status_changes(changes, max(d for d, _ in prices.values()))
 
 
 def run():
@@ -287,7 +335,7 @@ def run():
 
     # 4. 快速更新估值現價與狀態
     print("\n更新估值...")
-    update_valuations({sid: p for sid, (_, p) in all_prices.items()})
+    update_valuations(all_prices)
 
     if failed:
         print(f"\n❌ 部分來源抓取失敗（{'、'.join(failed)}），資料不完整。")

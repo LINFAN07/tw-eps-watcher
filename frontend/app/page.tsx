@@ -62,6 +62,8 @@ export default function Home() {
       </section>
 
       <footer className="mt-12 pt-6 border-t border-gray-100 flex gap-4 justify-center text-xs text-gray-400">
+        <Link href="/report" className="hover:text-gray-600">每日市場快報</Link>
+        <span>·</span>
         <Link href="/backtest" className="hover:text-gray-600">模型體檢報告</Link>
         <span>·</span>
         <Link href="/health" className="hover:text-gray-600">資料健康狀態</Link>
