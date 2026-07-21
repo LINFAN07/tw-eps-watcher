@@ -35,8 +35,19 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-CHANGE_THRESHOLD = 0.15   # 相鄰季股本變動門檻
-RECENT_YEARS     = 5      # 只採計近幾年的事件
+# 增資與減資分開設門檻：兩者性質不同，不該共用一個數字。
+#
+# 2026-07-21 首次全市場啟用的實測分布（2418 支有逐季股本資料）：
+#   增資/分割 652 支（中位 24%），其中 341 支落在 15~24%——多為配股票股利，
+#     台股極普遍（配 2 元股票股利即 +20%），警告價值低。
+#   減資 131 支（中位 30%），15~24% 僅 41 支，且減資常伴隨彌補虧損，
+#     事件本身就是值得注意的訊號。
+#
+# 統一 15% 會讓 779 支（32%）掛上警告，三分之一的股票都有徽章，
+# 使用者會習慣性忽略，反而稀釋掉真正該注意的大幅變動。
+INCREASE_THRESHOLD = 0.25   # 增資／分割：略過配股等常態小幅變動
+DECREASE_THRESHOLD = 0.15   # 減資：較罕見且訊號較強，完整保留
+RECENT_YEARS       = 5      # 只採計近幾年的事件
 
 
 def fetch_shares_by_stock() -> dict[str, list[tuple[str, int]]]:
@@ -83,7 +94,9 @@ def detect_latest_event(series: list[tuple[str, int]], cutoff: str) -> str | Non
         if cur_date < cutoff or prev <= 0:
             continue
         change = (cur - prev) / prev
-        if abs(change) < CHANGE_THRESHOLD:
+        # 依方向套用各自的門檻（見上方常數說明），不可用 abs() 一視同仁
+        threshold = DECREASE_THRESHOLD if change < 0 else INCREASE_THRESHOLD
+        if abs(change) < threshold:
             continue
         direction = "減資" if change < 0 else "增資/分割"
         pct = abs(round(change * 100))
@@ -137,7 +150,8 @@ def main():
         if warning:
             warned += 1
 
-    print(f"偵測到近 {RECENT_YEARS} 年股本變動 ≥ {int(CHANGE_THRESHOLD*100)}%：{warned} 支\n")
+    print(f"偵測到近 {RECENT_YEARS} 年股本變動"
+          f"（增資 ≥{int(INCREASE_THRESHOLD*100)}%、減資 ≥{int(DECREASE_THRESHOLD*100)}%）：{warned} 支\n")
     if warned:
         for u in updates:
             if u["capital_change_warning"]:
