@@ -107,11 +107,18 @@
   healthchecks.io 從外部通知。ping 程式已內建，**待你註冊 healthchecks.io 並設 secret 才生效**。
 - [x] **D. 錨點股常駐跨來源比對**（2026-07-18 完成）：跨來源比對原本抽隨機 10 支，權值股未必被抽到。
   → `ANCHOR_STOCKS`（2330/2317/2454/2882/1301/2412/2603/2891）每週必比，隨機抽樣再補其餘。
-- [x] **E. 股本變動偵測並標記（減資/增資/分割）**（2026-07-18 建置完成，2026-07-21 啟用中）
-  - **2026-07-21 查證**：`capital_change_warning` 與 `shares_thousand` 皆為 0 筆，
-    確認建置後從未實際啟用。當日已執行 `download_balance_sheet.py` 回填逐季股本
-    （FinMind 逐股呼叫，約 4.6 小時），完成後需再跑 `patch_capital_change_warning.py`
-    才會出現藍色 🔀 徽章。之後由 `quarterly_fundamentals.yml` 每季自動維護。
+- [x] **E. 股本變動偵測並標記（減資/增資/分割）**（2026-07-18 建置，**2026-07-21 啟用完成**）
+  - **查證**：`capital_change_warning` 與 `shares_thousand` 原本皆為 0 筆，
+    確認建置後從未實際啟用。
+  - **啟用結果**：`download_balance_sheet.py` 回填逐季股本 62,215 筆（100%，約 4.6 小時），
+    `patch_capital_change_warning.py` 寫入 **779 支**警告。已實測前端徽章
+    （2250 增資 23%、6483 增資 39%；台積電無徽章，近 5 年股本確實無大變動）。
+    之後由 `quarterly_fundamentals.yml` 每季自動維護。
+  - **待決定：門檻可能過寬**。15% 門檻使 779 支（有資料者的 32%）掛上警告，
+    其中 382 支只是 15～24% 的小幅變動（多為配股票股利）。
+    警告涵蓋三分之一的股票，可能反而讓使用者忽略所有警告。
+    分布：增資/分割 652 支（中位 24%）、減資 131 支（中位 30%）。
+    若改 25% 門檻約剩 400 支、30% 約剩 200 支。
   - ① `schema.sql`：`balance_sheet_quarterly` 加 `shares_thousand`、`valuations` 加
     `capital_change_warning`。② `download_balance_sheet.py` 每季寫入 `shares_thousand`
     （每次重抓 10 年，一次排程即回填全歷史）。③ `patch_capital_change_warning.py`：
