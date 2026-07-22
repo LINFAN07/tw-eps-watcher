@@ -31,8 +31,10 @@ backtest_valuation.py — 估值帶訊號回測
 - **樣本期間**：資料自 2016-06 起，24 個月持有期的樣本輪次較少。
 """
 
+import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -278,25 +280,36 @@ def forward_returns(adj: pd.DataFrame, h: int, mask: pd.DataFrame | None = None)
 
 
 def cheap_mask(adj: pd.DataFrame, base: pd.DataFrame,
-               lo: float, hi: float) -> pd.DataFrame:
+               lo: float, hi: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    「便宜」訊號的布林面板（列＝月末、欄＝股票）。
+    「便宜」訊號的布林面板（列＝月末、欄＝股票），以及每格的折價倍數。
+
     base = 估值基準值面板（P/E 用 TTM EPS，P/B 用每股淨值）。
+    折價倍數 = 便宜價 ÷ 現價。訊號成立時必 ≥1，數字越大代表現價離便宜價越遠。
+
+    為什麼要記錄它：這個比值極大時，多半不是「跌得很便宜」而是
+    「歷史倍數已經不適用了」——公司基本面劇變，早年的高倍數對現在毫無參考價值。
+    2026-07-22 實測 4763 材料-KY：淨值 10 年成長 8 倍、股價腰斬，
+    歷史 P/B 從 39 倍掉到 2.3 倍，目標價因此算出 830 元（現價 50.3）。
     """
     base = base.reindex(columns=adj.columns).where(base > 0)
     mult = (adj / base).where(lambda m: (m >= lo) & (m <= hi))
 
     # expanding：時點 T 的百分位只用 ≤T 的樣本，這是本回測不作弊的關鍵
     cheap_mult = mult.expanding(min_periods=MIN_SAMPLE).quantile(PCT_CHEAP)
-    return (adj <= base * cheap_mult) & mult.notna()
+    cheap_price = base * cheap_mult
+    return (adj <= cheap_price) & mult.notna(), cheap_price / adj
 
 
 def backtest(model: str, adj: pd.DataFrame, base: pd.DataFrame,
              lo: float, hi: float) -> pd.DataFrame:
     """回傳每一筆「便宜訊號 → 未來報酬」的長表"""
-    is_cheap = cheap_mask(adj, base, lo, hi)
+    is_cheap, discount = cheap_mask(adj, base, lo, hi)
     df = pd.concat([forward_returns(adj, h, is_cheap) for h in HORIZONS], ignore_index=True)
     df["model"] = model
+    # 折價倍數逐格對應回長表，供事後分析「深度折價是機會還是模型失效」
+    df["discount"] = pd.MultiIndex.from_arrays(
+        [df["date"], df["stock_id"]]).map(discount.stack())
     return df
 
 
@@ -367,6 +380,18 @@ export const BY_INDUSTRY: IndustryRow[] = [
 
 
 def main():
+    ap = argparse.ArgumentParser(description="估值訊號回測")
+    ap.add_argument("--refresh", action="store_true",
+                    help="清掉 .backtest_cache 重新抓取。任何會改變原始資料的修正"
+                         "（欄位新增、數值 patch、還原邏輯變更）之後都必須加這個參數")
+    args = ap.parse_args()
+
+    if args.refresh and os.path.isdir(CACHE_DIR):
+        # 快取只看檔案在不在，不看內容是否過期——資料修正後不清就會拿舊值算，
+        # 而且結果看起來完全正常。2026-07-22 因此踩過一次（schema 加欄位後沒清）。
+        shutil.rmtree(CACHE_DIR)
+        print(f"已清除快取 {CACHE_DIR}")
+
     data = load_all()
     dates = data["dates"]
 
