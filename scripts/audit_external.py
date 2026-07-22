@@ -22,10 +22,22 @@
   D. 半年報公司的 TTM 期數 —— 驗 ttm_eps 不是「最近 4 期加總」（那是兩年）。
      A 段只證明每一季的值對，證明不了加總方式對：2026-07-22 事故時
      A 段 1,970 筆只有 1 筆不符，22 檔半年報公司的 TTM 卻全是兩年獲利。
+  E. 月營收 —— t187ap05_*，對 monthly_revenue。P/S 模型的唯一原始資料，
+     單位為千元→元的換算，錯一個 1000 倍內部檢查完全看不出來。
   C. 除權息還原 —— 除權除息計算結果表 TWT49U，驗「我們的股利資料 ＋ 還原公式」
      能否重現交易所公告的除權息參考價。
 
 股價不在此列：`validate_valuations.py` 已用 FinMind 對照，不重複。
+
+## 目前仍無法跨來源驗證的（不要以為綠燈就是全對）
+
+  - **現金流量表（P/FCF 的原始資料）**：交易所沒有對應的整批端點，只有 FinMind
+    一個來源，無從比對。目前僅知台積電的 TTM FCF 數量級合理（約 1.06 兆），
+    其餘 1,088 檔有 P/FCF 估值的股票沒有任何外部佐證。
+  - **歷史序列**：以上五段全部只驗「最新一期」。估值帶是用十年歷史算的，
+    那些歷史數字從未逐點對過外部來源。2026-07-22 修掉的面額與半年報 TTM
+    兩個 bug 都會污染整條歷史序列——稽核只能證明修完之後最新一期對了。
+  - **上櫃／興櫃的每股淨值**：B 段只涵蓋上市，TPEx 的淨值欄名未驗證。
 
 用法：
   python scripts/audit_external.py
@@ -63,6 +75,13 @@ INCOME_ENDPOINTS = (
 # 資產負債表只涵蓋上市：TPEx 端點的淨值欄名尚未驗證，寧可不驗也不要猜欄名
 # 猜錯會整批取不到值、卻因「沒有不符」而報告通過——那是最糟的綠燈。
 BALANCE_ENDPOINTS = [(f"上市 {k}", TWSE + f"t187ap07_L_{k}", True) for k in SECTORS]
+
+# 月營收，三個市場各一個端點。欄名皆為中文（與財報端點的中英混用不同）
+REVENUE_ENDPOINTS = [
+    ("上市", TWSE + "t187ap05_L", True),
+    ("上櫃", TPEX + "mopsfin_t187ap05_O", False),
+    ("興櫃", TPEX + "t187ap05_R", False),
+]
 
 # 容許誤差。四捨五入與申報時點差異不算問題，但單位錯（1000 倍）、
 # 累計誤用（Q2 起約 2 倍）、面額錯（10 倍）遠超此值，必被抓出。
@@ -141,6 +160,18 @@ def quarter_end_of(row: dict) -> str | None:
     if not y.isdigit() or s not in QUARTER_END:
         return None
     return f"{int(y) + 1911}-{QUARTER_END[s]}"
+
+
+def roc_month_to_iso(roc_ym: str) -> str | None:
+    """民國年月（11506）→ 該月第一天（2026-06-01）。與 update_fundamentals 同一套轉換。"""
+    text = str(roc_ym or "").strip()
+    if len(text) < 5:
+        return None
+    try:
+        year, month = int(text[:-2]) + 1911, int(text[-2:])
+    except ValueError:
+        return None
+    return f"{year}-{month:02d}-01" if 1 <= month <= 12 else None
 
 
 def official_values(endpoints: list, col_names: tuple) -> dict:
@@ -323,18 +354,91 @@ def check_ttm_window() -> list[str]:
     return bad
 
 
+def check_revenue() -> list[str]:
+    """
+    月營收 —— P/S 模型的唯一原始資料，先前完全沒有跨來源驗證。
+
+    P/S 有 420 檔判「便宜」，而它的分子（TTM 每股營收）全靠 monthly_revenue。
+    這張表的單位是【元】，來源 OpenAPI 給的是【千元】——差一個 1000 倍就是
+    每股營收暴增千倍、目標價跟著暴增，而內部一致性檢查完全看不出來
+    （所有數字彼此自洽）。這正是本專案「單位錯」那類事故的形狀。
+
+    三個市場的欄名一致（皆為中文），與財報端點不同，故不需 field() 兜英文欄名。
+    """
+    print("\n=== E. 月營收（t187ap05_* vs monthly_revenue）===")
+    official: dict[tuple[str, str], float] = {}
+    for label, url, verify in REVENUE_ENDPOINTS:
+        rows = fetch_json(url, verify)
+        hit = 0
+        for r in rows:
+            sid = field(r, "公司代號")
+            ym = roc_month_to_iso(field(r, "資料年月"))
+            rev_k = to_float(field(r, "營業收入-當月營收"))
+            if sid and ym and rev_k is not None and rev_k >= 0:
+                official[(sid, ym)] = rev_k * 1000      # 千元 → 元
+                hit += 1
+        print(f"  {label}：{len(rows)} 筆，可用 {hit} 筆")
+
+    months = {ym for _, ym in official}
+    ours: dict[tuple[str, str], float] = {}
+    offset = 0
+    while True:
+        rows = (supabase.table("monthly_revenue").select("stock_id,year_month,revenue")
+                .in_("year_month", sorted(months))
+                .order("stock_id").order("year_month")
+                .range(offset, offset + 999).execute().data)
+        for r in rows:
+            if r["revenue"] is not None:
+                ours[(r["stock_id"], r["year_month"])] = float(r["revenue"])
+        if len(rows) < 1000:
+            break
+        offset += 1000
+
+    bad, checked, missing = [], 0, 0
+    for key, theirs in official.items():
+        mine = ours.get(key)
+        if mine is None:
+            missing += 1
+            continue
+        checked += 1
+        # 相對誤差 1%：容忍四捨五入，但單位錯（1000 倍）必被抓出
+        if theirs == 0:
+            if mine != 0:
+                bad.append(f"{key[0]} {key[1]}：我們 {mine:,.0f} vs 交易所 0")
+        elif abs(mine - theirs) / abs(theirs) > 0.01:
+            bad.append(f"{key[0]} {key[1]}：我們 {mine:,.0f} vs 交易所 {theirs:,.0f}"
+                       f"（{mine / theirs:.2f} 倍）")
+    print(f"  比對 {checked} 筆，不符 {len(bad)} 筆，資料庫無對應 {missing} 筆")
+    print(f"  涵蓋月份：{', '.join(sorted(months))}")
+    return bad
+
+
 def check_ex_rights(days: int) -> list[str]:
     """
     驗「我們的股利資料 ＋ 還原公式」能否重現交易所公告的除權息參考價。
 
     刻意用交易所公告的前收當基準，而不是資料庫價格——這裡要驗的是
     股利資料與還原公式，把價格的已知誤差（週採樣使基準偏移 6~7 天）隔離掉。
+
+    ## 有官方因子的日期不計失敗
+
+    2026-07-22 起，生產路徑（估值、河流圖、回測）優先使用 ex_right_factors
+    表的官方因子，自算公式只在查不到官方值時才用（見 price_adjust.back_adjust）。
+    因此「自算對不上」不等於「網站上的數字錯了」——上市有 10 年官方因子，
+    自算誤差不會流到畫面上。
+
+    這一段若不區分，紅燈會持續亮在早已修好的東西上。稽核一旦開始喊狼來了
+    就沒人看，那比不做更糟（同 check_bvps 的取捨）。
+
+    真正該失敗的只有兩種：
+      1. 官方因子涵蓋不到的日期（上櫃／興櫃歷史）自算對不上——那是生產路徑
+      2. dividends 表完全沒有該筆——那是資料缺漏，兩條路徑都救不了
     """
     print(f"\n=== C. 除權息還原（TWT49U 近 {days} 天）===")
     # 稽核範圍限於股票名冊。TWT49U 也含 ETF（00 開頭），那些本就不在 dividends 表，
     # 不先濾掉會產生大量假警報，把真正的缺漏淹沒。
     known = known_stock_ids()
-    bad, checked, skipped = [], 0, 0
+    bad, info, checked, skipped = [], [], 0, 0
     for i in range(days):
         d = date.today() - timedelta(days=i)
         ex = f"{d:%Y-%m-%d}"
@@ -345,6 +449,10 @@ def check_ex_rights(days: int) -> list[str]:
         ours_div = {r["stock_id"]: r for r in
                     supabase.table("dividends").select("stock_id,cash_dividend,stock_dividend")
                     .eq("ex_date", ex).execute().data}
+        # 該日已有官方還原因子的股票：自算誤差不會流到生產，僅供參考
+        covered = {r["stock_id"] for r in
+                   supabase.table("ex_right_factors").select("stock_id")
+                   .eq("ex_date", ex).execute().data}
         for r in rows:
             sid, prev, ref = r[1], to_float(r[3]), to_float(r[4])
             if not (prev and ref):
@@ -354,7 +462,12 @@ def check_ex_rights(days: int) -> list[str]:
                 continue
             dv = ours_div.get(sid)
             if not dv:
-                bad.append(f"{sid} {ex}：交易所有除權息紀錄，dividends 表沒有")
+                if sid in covered:
+                    # 官方因子有這筆，還原不受影響；但股利本身缺漏會影響殖利率模型
+                    info.append(f"{sid} {ex}：dividends 表沒有（官方因子已涵蓋，"
+                                f"還原不受影響；殖利率模型仍會少這筆）")
+                else:
+                    bad.append(f"{sid} {ex}：交易所有除權息紀錄，dividends 表沒有")
                 continue
             cash, stock = float(dv["cash_dividend"] or 0), float(dv["stock_dividend"] or 0)
             # 用同一支還原函式，確保驗的是生產程式碼而非另寫一份公式。
@@ -362,9 +475,15 @@ def check_ex_rights(days: int) -> list[str]:
             ours = back_adjust(["1900-01-01", ex], [prev, prev], [(ex, cash, stock)])[0]
             checked += 1
             if abs(ours - ref) > PRICE_TOLERANCE:
-                bad.append(f"{sid} {ex}：還原價 {ours:.2f} vs 交易所公告參考價 {ref}"
-                           f"（現金 {cash} 配股 {stock}）")
+                msg = (f"{sid} {ex}：自算還原價 {ours:.2f} vs 交易所公告 {ref}"
+                       f"（現金 {cash} 配股 {stock}）")
+                # 有官方因子者，生產路徑走的是官方值，自算誤差不影響畫面
+                (info if sid in covered else bad).append(msg)
     print(f"  比對 {checked} 筆，不符 {len(bad)} 筆，非名冊標的（ETF 等）跳過 {skipped} 筆")
+    if info:
+        print(f"  另有 {len(info)} 筆自算對不上、但已由官方因子涵蓋（不計失敗）：")
+        for m in info[:5]:
+            print(f"      {m}")
     if checked == 0:
         print("  （期間無除權息，此段未實際驗證任何資料）")
     return bad
@@ -376,8 +495,8 @@ def main():
     args = ap.parse_args()
 
     print("對外比對稽核：以交易所官方申報值驗證資料庫")
-    problems = (check_eps() + check_bvps()
-                + check_ttm_window() + check_ex_rights(args.ex_days))
+    problems = (check_eps() + check_bvps() + check_ttm_window()
+                + check_revenue() + check_ex_rights(args.ex_days))
 
     print("\n" + "=" * 60)
     if not problems:
