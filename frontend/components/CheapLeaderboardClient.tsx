@@ -1,5 +1,5 @@
 'use client'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { getTrackRecord, getWorstTrackRecord } from '@/lib/backtest'
 import {
@@ -49,6 +49,14 @@ const MODEL_META: Record<Model, { label: string; desc: string }> = {
   pfcf:      { label: 'P/FCF', desc: '現金流估值' },
 }
 
+/** 分頁記在網址上（?tab=pe），使用者點進個股後按上一頁才會回到原本那個分頁 */
+const TAB_PARAM = 'tab'
+const DEFAULT_MODEL: Model = 'consensus'
+
+function isModel(v: string | null): v is Model {
+  return v != null && v in MODEL_META
+}
+
 // 金融相關產業（無營業利益率，豁免利益率篩選）
 const FINANCIAL_KEYWORDS = ['金融', '保險', '銀行', '證券']
 
@@ -89,8 +97,26 @@ const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-
 export default function CheapLeaderboardClient(
   { data, yieldThreshold }: { data: LeaderboardData; yieldThreshold: number },
 ) {
-  const [model, setModel]               = useState<Model>('consensus')
+  const [model, setModel]               = useState<Model>(DEFAULT_MODEL)
   const [industry, setIndustry]         = useState<string>('全部')
+
+  // 掛載後才從網址還原分頁，不用 useState 初始值：首頁是預先產生的靜態 HTML，
+  // 初始 state 若跟著網址走就會與伺服器產物不一致（hydration mismatch）。
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get(TAB_PARAM)
+    if (isModel(tab)) setModel(tab)
+  }, [])
+
+  function selectModel(m: Model) {
+    setModel(m)
+    setIndustry('全部')
+    const url = new URL(window.location.href)
+    if (m === DEFAULT_MODEL) url.searchParams.delete(TAB_PARAM)
+    else url.searchParams.set(TAB_PARAM, m)
+    // replaceState 而非 pushState：切換分頁不該在瀏覽紀錄裡堆一筆，
+    // 否則按上一頁會變成逐一倒退切過的每個分頁，而不是回到前一個頁面
+    window.history.replaceState(null, '', url)
+  }
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
   const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
   const [excludeKY, setExcludeKY]       = useState(true)   // 排除 KY 股（見 KY_TOOLTIP）
@@ -154,9 +180,11 @@ export default function CheapLeaderboardClient(
         {(Object.keys(MODEL_META) as Model[]).map(m => (
           <button
             key={m}
-            onClick={() => { setModel(m); setIndustry('全部') }}
+            onClick={() => selectModel(m)}
             className={[
-              'flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              // min-w-fit + nowrap：分頁等寬分配剩餘空間，但不得壓到比內容還窄。
+              // 少了它，最長的「P/FCF 現金流估值」會被擠到換行，徽章掉到第二行。
+              'flex-1 min-w-fit whitespace-nowrap px-2 py-1.5 rounded-lg text-sm font-medium transition-colors',
               model === m ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700',
             ].join(' ')}
           >
