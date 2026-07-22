@@ -31,6 +31,7 @@ NO_SCHEDULE_OK = {
     "init_download.py":               "新環境初始化，跑一次",
     "backfill_industry.py":           "一次性補產業別",
     "backfill_eps_from_income.py":    "由 quarterly_eps.yml 條件式呼叫",
+    "backfill_last_seen.py":          "一次性回填 last_seen_date；日常維護由 daily_price_update.mark_delisted 負責",
     # 共用模組，非可執行工作
     "finmind_client.py":              "共用模組",
     "price_adjust.py":                "共用純函式模組",

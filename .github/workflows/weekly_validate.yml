@@ -30,6 +30,14 @@ jobs:
       - name: 排程稽核（確認每支腳本都真的會被執行）
         run: python scripts/audit_workflows.py
 
+      # 交叉驗證：同一個數字用兩條路徑重算比對，抓單位錯、累計誤用、基準不符。
+      # 內部一致性檢查抓不到這類錯誤——那些數字彼此自洽，規則全部會通過。
+      - name: 交叉驗證健檢（衍生值 vs 原始資料重算）
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/audit_cross_check.py
+
       - name: 執行估值驗證（內部一致性 + 與 FinMind 跨來源比對）
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
