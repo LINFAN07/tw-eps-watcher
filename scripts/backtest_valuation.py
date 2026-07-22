@@ -134,7 +134,7 @@ def load_all() -> dict:
         "stocks":    stocks,
         "eps":       _cached("eps",       lambda: _paged("eps_quarterly", "stock_id,quarter_end_date,eps", "stock_id")),
         "bvps":      _cached("bvps",      lambda: _paged("balance_sheet_quarterly",
-                                                         "stock_id,quarter_end_date,book_value_per_share", "stock_id")),
+                                                         "stock_id,quarter_end_date,book_value_per_share,shares_thousand", "stock_id")),
         "dividends": _cached("dividends", lambda: _paged("dividends", "stock_id,ex_date,cash_dividend,stock_dividend", "stock_id")),
     }
 
@@ -182,16 +182,49 @@ def adjusted_price_matrix(prices: pd.DataFrame, dividends: pd.DataFrame,
     return pd.DataFrame(adj).reindex(dates)
 
 
+def share_factor_table(bvps: pd.DataFrame) -> pd.DataFrame:
+    """
+    每支股票各季的股數因子 = 當季股數 ÷ 該股最新股數。
+
+    與 calculate_valuation.share_factors 同一套邏輯，兩邊必須一致：
+    EPS 與每股淨值都是各季用當時股數申報的，配股後股數變多、數值變小，
+    財報不追溯調整；而股價已除權還原到最新股數基準，分母不換算就會壓低倍數。
+    2026-07-22 實測 1436 的 P/E 因此被壓低 43%。
+    """
+    df = bvps.copy()
+    df["quarter_end_date"] = pd.to_datetime(df["quarter_end_date"])
+    df["shares_thousand"] = pd.to_numeric(df["shares_thousand"], errors="coerce")
+    df = df.dropna(subset=["shares_thousand"]).sort_values(["stock_id", "quarter_end_date"])
+    df = df[df["shares_thousand"] > 0]
+    latest = df.groupby("stock_id")["shares_thousand"].last()
+    df["factor"] = df["shares_thousand"] / df["stock_id"].map(latest)
+    return df[["stock_id", "quarter_end_date", "factor"]]
+
+
 def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
-                       ttm_window: int | None) -> pd.DataFrame:
+                       ttm_window: int | None,
+                       factors: pd.DataFrame | None = None) -> pd.DataFrame:
     """
     把季頻基本面攤成月末面板：每個月末取「當時已公布」的最新一筆。
     ttm_window 不為 None 時先做滾動加總（EPS 需 TTM，每股淨值是存量不需要）。
+
+    factors 給定時，先把每季數值換算到該股的最新股數基準，再滾動加總——
+    順序不可顛倒，每季 EPS 要對應自己那一季的股數。
     """
     df = fund.copy()
     df["quarter_end_date"] = pd.to_datetime(df["quarter_end_date"])
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
     df = df.dropna(subset=[value_col]).sort_values(["stock_id", "quarter_end_date"])
+
+    if factors is not None and not factors.empty:
+        # 股本季度與財報季度未必逐一對齊（興櫃為半年報），故以 merge_asof 向前對應；
+        # 對應不到者維持原值（因子 1），不猜、不外插
+        df = pd.merge_asof(
+            df, factors.sort_values("quarter_end_date"),
+            on="quarter_end_date", by="stock_id", direction="backward",
+        )
+        df[value_col] = df[value_col] * df["factor"].fillna(1.0)
+        df = df.sort_values(["stock_id", "quarter_end_date"])
 
     if ttm_window is not None:
         # 興櫃為半年報（月份只有 6、12），4 期會誤把 2 年當 TTM，改用 2 期
@@ -323,8 +356,10 @@ def main():
 
     print("組裝面板…")
     adj = adjusted_price_matrix(data["prices"], data["dividends"], dates)
-    eps_ttm = fundamental_matrix(data["eps"],  "eps",                  dates, ttm_window=4)
-    bvps    = fundamental_matrix(data["bvps"], "book_value_per_share", dates, ttm_window=None)
+    # 分母也要換算到最新股數基準，否則與「已除權還原的股價」基準不一致
+    factors = share_factor_table(data["bvps"])
+    eps_ttm = fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors)
+    bvps    = fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors)
 
     print(f"  月數 {len(dates)}（{dates[0]} ~ {dates[-1]}）、股票 {adj.shape[1]} 支")
 
