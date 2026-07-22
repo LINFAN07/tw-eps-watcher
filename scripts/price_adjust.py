@@ -7,7 +7,7 @@ price_adjust.py — 除權息後向還原（共用純函式）
 
 ## 後向還原
 
-- 每個除權息日 d 的還原因子，即當日的「除權息參考價 ÷ 前一交易日收盤價」：
+- 每個除權息日 d 的還原因子，即當日的「除權息參考價 ÷ 除權息前收盤價」：
 
       factor_d = (前收盤 − 現金股利) ÷ (前收盤 × (1 + 股票股利 ÷ 10))
 
@@ -67,7 +67,10 @@ def back_adjust(dates: list[str], closes: list[float],
         i = bisect.bisect_left(dates, ex_date)   # 第一個 >= ex_date 的位置
         if i == 0:
             continue                             # 除權息日早於所有股價，無基準可算
-        prev_close = closes[i - 1]               # 前一交易日收盤價
+        # 序列中除權息日前的最後一筆收盤價。注意這未必是「前一交易日」——
+        # 週採樣瘦身後三個月以前只剩週頻，實測會取到 6～7 天前的價格。
+        # 誤差 <1%（有配股時分母由配股率主導，對 prev_close 不敏感），詳見 TODO 1f。
+        prev_close = closes[i - 1]
         # 除權息參考價 ÷ 前收：分子除息、分母除權（配股率 = 股票股利 ÷ 10）
         f = (prev_close - cash) / (prev_close * (1 + stock / 10))
         if f <= 0 or f > 1:
