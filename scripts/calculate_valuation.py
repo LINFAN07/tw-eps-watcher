@@ -18,6 +18,8 @@ from supabase import create_client
 import pandas as pd
 import numpy as np
 from price_adjust import back_adjust   # 除權息即時還原（不儲存，見 price_adjust.py）
+from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
+import ex_factors                      # 除權息還原因子（整表快取，避免逐股查詢）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -34,10 +36,6 @@ PE_MIN,   PE_MAX                = 3, 200
 # 這是刻意的：用不到一年的價格算出來的百分位帶不具參考性，
 # 其中 18 支原本顯示「便宜」，比沒有估值更容易誤導。
 MIN_PE_SAMPLES = 40
-
-# 判斷「季報或半年報」時回看幾期。稽核（audit_external.check_ttm_window）
-# 必須用同一個值，否則兩邊對同一支股票會給出不同答案。
-EPS_WINDOW_LOOKBACK = 6
 
 
 def _fetch_paged(table, filters: dict, columns: str) -> list:
@@ -82,19 +80,6 @@ def fetch_dividends(stock_id: str) -> list[tuple[str, float, float]]:
             for r in rows]
 
 
-def fetch_official_factors(stock_id: str) -> dict[str, float]:
-    """
-    交易所公告的還原因子 {除權息日: 參考價 ÷ 前收盤價}。
-
-    優先於股利自算——自算公式涵蓋不了現金增資與減資（見 price_adjust.py）。
-    上櫃／興櫃只有當日資料、無歷史，那些日期查無官方值時自動回退自算。
-    """
-    rows = _fetch_paged("ex_right_factors", {"stock_id": stock_id},
-                        "ex_date,prev_close,ref_price")
-    return {r["ex_date"]: float(r["ref_price"]) / float(r["prev_close"])
-            for r in rows if float(r["prev_close"] or 0) > 0}
-
-
 def fetch_prices(stock_id: str) -> pd.DataFrame:
     rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price")
     if not rows:
@@ -108,7 +93,7 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     df["adj_price"] = back_adjust(df["date"].astype(str).tolist(),
                                   df["close_price"].tolist(),
                                   fetch_dividends(stock_id),
-                                  fetch_official_factors(stock_id))
+                                  ex_factors.for_stock(supabase, stock_id))
     df["date"] = pd.to_datetime(df["date"])
     return df
 
@@ -191,26 +176,8 @@ def apply_share_factors(df: pd.DataFrame, value_col: str, factors: pd.DataFrame)
 
 
 def _eps_window(eps_df: pd.DataFrame) -> int:
-    """
-    興櫃半年報只有 6/30 與 12/31，用 2 期；上市/上櫃季報用 4 期。
-
-    只看最近 6 期，不看全部歷史——早年揭露頻率不同或單筆資料異常，
-    會讓整支股票被誤判成季報，TTM 變成「最近 4 個半年」＝兩年獲利。
-
-    視窗長度取 6 期而非 8：季報 6 期＝1.5 年，已足以判斷頻率；
-    再往前拉只會多納入陳年的異常期別。5254 欣訊科技即為此例——
-    最近第 7 期是 2023-03-31，用 8 期視窗仍會被誤判成季報。
-
-    2026-07-22 事故：4546 長亨的 EPS 全是 6/12 月，只有一筆 2020-03-31 例外，
-    整支股票因此被判季報，ttm_eps 算成 12.98（正確 7.58，高估 71%），
-    目標價連帶虛高、被判「便宜」進了排行榜。全市場 22 檔同症狀，
-    最嚴重者高估 350%（6650 帝圖 5.28 vs 正確 1.33）。
-
-    已知限制：若某公司真的在期間中途改變揭露頻率，歷史序列前段的 TTM
-    會用錯期數。半年報公司幾乎都是興櫃小型股、鮮少改頻率，故不為此增加複雜度。
-    """
-    recent = eps_df.nlargest(EPS_WINDOW_LOOKBACK, "quarter_end_date")
-    return 2 if set(recent["quarter_end_date"].dt.month) <= {6, 12} else 4
+    """TTM 應加總的期數。判定邏輯與理由見 periodicity.report_window（四處共用）"""
+    return report_window(eps_df["quarter_end_date"])
 
 
 def to_weekly(price_df: pd.DataFrame) -> pd.DataFrame:

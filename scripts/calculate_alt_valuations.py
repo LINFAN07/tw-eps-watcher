@@ -21,6 +21,8 @@ from supabase import create_client
 import pandas as pd
 import numpy as np
 from price_adjust import back_adjust   # 除權息即時還原（不儲存，見 price_adjust.py）
+from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
+import ex_factors                      # 除權息還原因子（整表快取，避免逐股查詢）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -101,19 +103,6 @@ def fetch_dividends(stock_id: str) -> list[tuple[str, float, float]]:
             for r in rows]
 
 
-def fetch_official_factors(stock_id: str) -> dict[str, float]:
-    """
-    交易所公告的還原因子 {除權息日: 參考價 ÷ 前收盤價}。
-
-    優先於股利自算——自算公式涵蓋不了現金增資與減資（見 price_adjust.py）。
-    上櫃／興櫃只有當日資料、無歷史，那些日期查無官方值時自動回退自算。
-    """
-    rows = _fetch_paged("ex_right_factors", {"stock_id": stock_id},
-                        "ex_date,prev_close,ref_price")
-    return {r["ex_date"]: float(r["ref_price"]) / float(r["prev_close"])
-            for r in rows if float(r["prev_close"] or 0) > 0}
-
-
 def fetch_prices(stock_id: str) -> pd.DataFrame:
     rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price")
     if not rows:
@@ -127,7 +116,7 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     # （殖利率本質是實際價 vs 股利，還原會虛增歷史殖利率）。
     df["adj_price"]   = back_adjust(df["date"].tolist(), df["close_price"].tolist(),
                                     fetch_dividends(stock_id),
-                                    fetch_official_factors(stock_id))
+                                    ex_factors.for_stock(supabase, stock_id))
     return df
 
 
@@ -335,9 +324,9 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     cf_df["fcf"] = cf_df["operating_cf"] + cf_df["capex"]
 
     # 半年報公司（興櫃）只有 6/12 月，固定取 4 期會把兩年當成 TTM。
-    # 只看最近 8 期：早年頻率不同或單筆異常，不該讓整支股票被誤判
-    # （同 calculate_valuation._eps_window，2026-07-22 長亨事故的同型缺陷）。
-    w = 2 if {int(d[5:7]) for d in cf_df["quarter_end_date"].tail(8)} <= {6, 12} else 4
+    # 與 P/E 共用同一份判定——先前這裡自寫一份且視窗是 8 期，
+    # 與 calculate_valuation 的 6 期不同步（註解卻宣稱一致）。
+    w = report_window(cf_df["quarter_end_date"])
 
     pfcf_series = []
 

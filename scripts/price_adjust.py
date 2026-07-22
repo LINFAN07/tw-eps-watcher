@@ -93,7 +93,7 @@ def back_adjust(dates: list[str], closes: list[float],
                 continue                         # 股利 ≥ 前收（資料異常），跳過該筆
         factors.append((ex_date, f))
 
-    factors.sort()                               # 依除息日升冪
+    # factors 已依 sorted() 迭代產生，天然升冪，不需再排序
     adjusted = [0.0] * len(dates)
     cum = 1.0
     j = len(factors) - 1                         # 由最晚的除息日往回套用

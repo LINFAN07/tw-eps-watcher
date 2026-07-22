@@ -55,6 +55,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, os.path.dirname(__file__))
+import periodicity
 from price_adjust import back_adjust
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -101,8 +102,9 @@ BVPS_BAD_RATE_LIMIT = 0.08
 
 QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
 
-# 判斷季報／半年報時回看幾期，必須與 calculate_valuation.EPS_WINDOW_LOOKBACK 相同
-LOOKBACK = 6
+# 期數判定與生產端共用同一份實作，不再靠註解約定一致（2026-07-22 曾因
+# 一邊 8 期、一邊 6 期而誤報）。LOOKBACK 僅用於本檔挑選最近幾期做驗算。
+LOOKBACK = periodicity.LOOKBACK
 
 
 class AuditError(Exception):
@@ -218,7 +220,7 @@ def db_values(table: str, col: str, quarters: set) -> dict:
         offset += 1000
 
 
-def compare(name: str, official: dict, table: str, col: str,
+def compare(official: dict, table: str, col: str,
             tol: float, relative: bool = False) -> list[str]:
     """逐筆比對官方值與資料庫值。回傳不符清單。"""
     quarters = {q for _, q in official}
@@ -254,7 +256,7 @@ def compare(name: str, official: dict, table: str, col: str,
 def check_eps() -> list[str]:
     print("\n=== A. 每股盈餘（綜合損益表 vs eps_quarterly）===")
     official = official_values(INCOME_ENDPOINTS, ("基本每股盈餘（元）",))
-    return compare("EPS", official, "eps_quarterly", "eps", EPS_TOLERANCE)
+    return compare(official, "eps_quarterly", "eps", EPS_TOLERANCE)
 
 
 def check_bvps() -> list[str]:
@@ -273,7 +275,7 @@ def check_bvps() -> list[str]:
     print("\n=== B. 每股淨值（資產負債表 vs balance_sheet_quarterly）===")
     print("  注意：僅涵蓋上市；上櫃／興櫃的 TPEx 淨值欄名未驗證，故不納入")
     official = official_values(BALANCE_ENDPOINTS, ("每股參考淨值",))
-    bad = compare("每股淨值", official, "balance_sheet_quarterly",
+    bad = compare(official, "balance_sheet_quarterly",
                   "book_value_per_share", BVPS_REL_TOLERANCE, relative=True)
 
     rate = len(bad) / len(official) if official else 0

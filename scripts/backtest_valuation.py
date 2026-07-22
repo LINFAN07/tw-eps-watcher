@@ -43,6 +43,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from price_adjust import back_adjust
+from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -240,9 +241,13 @@ def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
         df = df.sort_values(["stock_id", "quarter_end_date"])
 
     if ttm_window is not None:
-        # 興櫃為半年報（月份只有 6、12），4 期會誤把 2 年當 TTM，改用 2 期
+        # 興櫃為半年報（月份只有 6、12），4 期會誤把 2 年當 TTM，改用 2 期。
+        # 2026-07-22：原本這裡看「全部歷史」的月份集合，一筆陳年 3/31 就會把
+        # 半年報公司誤判成季報——那正是當天在生產路徑修掉的缺陷，回測卻漏改。
+        # 回測是所有旗標門檻（pb_reliable 2 倍、pe_deep_discount 3 倍、帶寬分位）
+        # 的依據，用錯 TTM 等於門檻建在污染的樣本上。改用共用判定。
         def ttm(g):
-            w = 2 if set(g["quarter_end_date"].dt.month) <= {6, 12} else 4
+            w = report_window(g["quarter_end_date"])
             return g[value_col].rolling(w, min_periods=w).sum()
         df["value"] = df.groupby("stock_id", group_keys=False).apply(ttm)
     else:

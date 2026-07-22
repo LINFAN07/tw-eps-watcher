@@ -25,6 +25,8 @@ interface Valuation {
   pe_reliable?: boolean | null
   /** 便宜價 > 現價 3 倍：歷史倍數已不適用，不列入推薦（見 lib/peReliability.ts）*/
   pe_deep_discount?: boolean | null
+  /** P/B 便宜價 > 現價 2 倍：歷史倍數已不適用，不推薦也不進榜 */
+  pb_reliable?: boolean | null
   warning?: string | null
   nonop_warning?: string | null
   capital_change_warning?: string | null
@@ -115,11 +117,8 @@ const BAND_STYLE: Record<BandLevel, { icon: string; cls: string }> = {
 // 回測實績一律中性呈現。原本 bad 用紅框加 🪤，等於在說「別碰」——
 // 而 2026-07-22 的樣本外檢驗證明產業差異不會延續（見 lib/backtest.ts 的 OOS_CAVEAT），
 // 紅色警示是資料不支持的預測性暗示。數字照給，判斷留給使用者。
-const TONE_STYLE: Record<Tone, { icon: string; box: string }> = {
-  bad:     { icon: '📉', box: 'bg-gray-50 border-gray-200 text-gray-600' },
-  good:    { icon: '📈', box: 'bg-gray-50 border-gray-200 text-gray-600' },
-  neutral: { icon: '📊', box: 'bg-gray-50 border-gray-200 text-gray-600' },
-}
+const TONE_BOX = 'bg-gray-50 border-gray-200 text-gray-600'
+const TONE_ICON: Record<Tone, string> = { bad: '📉', good: '📈', neutral: '📊' }
 
 const statusStyle: Record<string, { bg: string; text: string; label: string }> = {
   '便宜': { bg: 'bg-green-50 border-green-200', text: 'text-green-700 bg-green-100', label: '低估' },
@@ -134,7 +133,12 @@ function toQuarterLabel(dateStr: string): string {
 
 function hasModel(v: Valuation, m: Model): boolean {
   if (m === 'pe')    return !!(v.status       && v.status       !== '無法計算' && v.cheap_price       != null)
-  if (m === 'pb')    return !!(v.pb_status    && v.pb_status    !== '無法計算' && v.pb_cheap_price    != null)
+  // pb_reliable === false：便宜價 > 現價 2 倍，歷史倍數已不適用。
+  // 這個檢查原本只做在排行榜，推薦模型沒做——結果 4763 材料-KY 被 P/B 榜擋掉，
+  // 點進個股頁卻仍被推薦看 P/B、看到 830 元目標價（現價 50.3）。
+  // 擋在 hasModel 而非 getRecommendedModel 裡，榜單與推薦才不會再度分岔。
+  if (m === 'pb')    return !!(v.pb_status    && v.pb_status    !== '無法計算' && v.pb_cheap_price    != null
+                               && v.pb_reliable !== false)
   if (m === 'ps')    return !!(v.ps_status    && v.ps_status    !== '無法計算' && v.ps_cheap_price    != null)
   if (m === 'pfcf')  return !!(v.pfcf_status  && v.pfcf_status  !== '無法計算' && v.pfcf_cheap_price  != null)
   return !!(v.yield_status && v.yield_status !== '無法計算' && v.yield_cheap_price != null)
@@ -452,8 +456,8 @@ export default function ValuationCard({
       {/* 此模型在本產業的歷史實績。放在目標價正下方而非另闢頁面，
           是因為「便宜」若不配上「便宜之後發生了什麼」，很容易被讀成「買了會賺」。*/}
       {track && (
-        <div className={`mt-4 rounded-xl border px-4 py-3 text-xs ${TONE_STYLE[track.tone].box}`}>
-          <span className="mr-1">{TONE_STYLE[track.tone].icon}</span>
+        <div className={`mt-4 rounded-xl border px-4 py-3 text-xs ${TONE_BOX}`}>
+          <span className="mr-1">{TONE_ICON[track.tone]}</span>
           <span className="font-semibold">歷史實績</span>
           <span className="ml-1.5">{track.verdict}</span>
           <Link href="/backtest" className="ml-1 underline underline-offset-2 hover:opacity-70">

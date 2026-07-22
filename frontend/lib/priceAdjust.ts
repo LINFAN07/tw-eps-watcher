@@ -54,7 +54,7 @@ export function backAdjust(
     }
     factors.push([exDate, f])
   }
-  factors.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  // factors 由已排序的 allDates 迭代產生，天然升冪，不需再排序
 
   const adjusted = new Array<number>(dates.length)
   let cum = 1
