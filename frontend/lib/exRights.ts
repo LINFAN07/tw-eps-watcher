@@ -24,10 +24,15 @@ export async function fetchExAdjustment(db: SupabaseClient, stockId: string) {
   const exList: ExEvent[] = (divRes.data ?? []).map(d =>
     [d.ex_date, Number(d.cash_dividend ?? 0), Number(d.stock_dividend ?? 0)])
 
+  // ref_price 的空值檢查不可省：Number(null) 是 0，會讓 official[d] = 0，
+  // 在 backAdjust 裡被判定為「有官方值但不合格」。後端 ex_factors.py 是
+  // 跳過該鍵、回退自算——兩邊必須同樣語意，否則同一筆髒資料會讓
+  // 前端圖表與後端估值帶對不上（目前 schema 有 NOT NULL 擋著，這是防禦）。
   const official: Record<string, number> = {}
   for (const f of facRes.data ?? []) {
     const prev = Number(f.prev_close)
-    if (prev > 0) official[f.ex_date] = Number(f.ref_price) / prev
+    const ref = f.ref_price == null ? NaN : Number(f.ref_price)
+    if (prev > 0 && Number.isFinite(ref)) official[f.ex_date] = ref / prev
   }
 
   return { exList, official }

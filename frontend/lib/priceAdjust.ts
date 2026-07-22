@@ -40,12 +40,14 @@ export function backAdjust(
     while (lo < hi) { const m = (lo + hi) >> 1; if (dates[m] < exDate) lo = m + 1; else hi = m }
     if (lo === 0) continue                    // 除權息日早於所有股價，無基準
 
+    // 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
+    // 上限取 20：彌補虧損型減資 95% 的參考價約為前收的 20 倍，台灣不罕見；
+    // 先前設 5 會把減資 80% 以上的案例當成異常丟掉。
+    // 超界或非有限值時【回退自算】而非整筆跳過——跳過等於那天完全不還原，
+    // 會在還原序列留下一個假跳空，比自算更差。
     let f = official?.[exDate]
-    if (f !== undefined) {
-      // 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
-      // 上限 5 純為防呆（因子再大就不可能是除權息了）。
-      if (!(f > 0 && f <= 5)) continue
-    } else {
+    if (f !== undefined && !(Number.isFinite(f) && f > 0 && f <= 20)) f = undefined
+    if (f === undefined) {
       const [cash, stock] = events.get(exDate)!
       if (cash <= 0 && stock <= 0) continue
       const prevClose = closes[lo - 1]

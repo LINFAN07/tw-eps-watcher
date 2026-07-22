@@ -44,6 +44,9 @@ LOOKBACK = 6
 # 半年報公司的季末月份集合
 _HALF_YEAR_MONTHS = {6, 12}
 
+# 少於這個期數就不下「半年報」結論（見 report_window 的說明）
+MIN_PERIODS_TO_JUDGE = 3
+
 
 def report_window(quarter_ends: Iterable) -> int:
     """
@@ -57,8 +60,14 @@ def report_window(quarter_ends: Iterable) -> int:
     # 若直接對月份排序取前 N 個，拿到的會是月份數字最大的幾期，不是最近的幾期
     recent = sorted((d for d in quarter_ends if d), reverse=True)[:LOOKBACK]
     months = {m for m in (_month_of(d) for d in recent) if m}
-    if not months:
-        return 4                       # 無從判斷時採季報，與過去行為一致
+
+    # 期數不足時一律採季報。「月份都落在 6/12」對只有 1~2 期的公司必然成立
+    # （新上市、或 Q1/Q3 尚未揭露），判成半年報會讓 TTM 只加總兩季、
+    # 少掉一半獲利 → 目標價腰斬 → 誤標「昂貴」。
+    # 採 4 期是安全的一邊：資料真的不足時 rolling(4) 會得到 NaN、該股沒有估值，
+    # 而判成 2 期反而會用不完整的資料算出一個看似正常的數字。
+    if len(recent) < MIN_PERIODS_TO_JUDGE:
+        return 4
     return 2 if months <= _HALF_YEAR_MONTHS else 4
 
 
@@ -66,7 +75,9 @@ def _month_of(value) -> int | None:
     """從 ISO 字串或 date/datetime 取出月份"""
     month = getattr(value, "month", None)
     if month is not None:
-        return int(month)
+        # pd.NaT 的 .month 是 NaN 且 bool(pd.NaT) 為 True，過濾不掉，
+        # 直接 int() 會拋 ValueError 讓整支腳本掛掉
+        return int(month) if month == month else None   # NaN != NaN
     text = str(value or "")
     # "2026-03-31" → 03
     return int(text[5:7]) if len(text) >= 7 and text[5:7].isdigit() else None

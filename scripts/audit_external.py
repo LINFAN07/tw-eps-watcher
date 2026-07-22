@@ -100,6 +100,11 @@ BVPS_REL_TOLERANCE = 0.05
 # 設 8% 保留一倍餘裕；面額寫死時是 23%，會被抓出。
 BVPS_BAD_RATE_LIMIT = 0.08
 
+# 最低涵蓋率。低於此值代表「資料庫整批沒寫進去」而非「數值有出入」——
+# 那是 2026-07-14 事故的形狀（TPEx 整批沒寫入，工作卻回報完成）。
+# 稽核若只看「有比對到的那些對不對」，資料缺席時會印出漂亮的綠燈。
+MIN_COVERAGE = 0.5
+
 QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
 
 # 期數判定與生產端共用同一份實作，不再靠註解約定一致（2026-07-22 曾因
@@ -242,6 +247,13 @@ def compare(official: dict, table: str, col: str,
             near += 1
 
     print(f"\n  比對 {checked} 筆，不符 {len(bad)} 筆，資料庫無對應 {missing} 筆")
+    # 「資料庫整批沒寫進去」必須是失敗，不能因為「沒有不符」而通過。
+    # 官方回 1,079 筆、我們 0 筆時，checked=0、bad=[] → 舊版會印「✅ 全部一致」
+    # 並 exit 0，正是 2026-07-14 那次事故的形狀（TPEx 整批沒寫入卻回報完成）。
+    if checked < len(official) * MIN_COVERAGE:
+        bad.append(f"⚠️ 涵蓋率過低：官方 {len(official)} 筆，資料庫只對到 {checked} 筆"
+                   f"（{checked / max(len(official), 1):.0%}，門檻 {MIN_COVERAGE:.0%}）"
+                   f"——多半是某次下載整批沒寫入，而非數值錯誤")
     if relative:
         # 容差內但差距 >1% 者單獨計數：這是「還沒壞但值得盯」的區間，
         # 若某天暴增，代表演算法或來源出現系統性偏移
@@ -340,7 +352,11 @@ def check_ttm_window() -> list[str]:
         # 回看期數必須與 calculate_valuation._eps_window 一致，否則兩邊
         # 對同一支股票會給出不同答案（2026-07-22 曾因一邊 8 期、一邊 6 期而誤報）
         recent = sorted(recs, reverse=True)[:LOOKBACK]
-        if {int(d[5:7]) for d, _ in recent} > {6, 12}:
+        # 用共用判定，不要自己寫——這裡原本是 `months > {6,12}` 想表達
+        # 「不是子集就跳過」，但 `>` 是真超集：{3,6,9} > {6,12} 為 False，
+        # 於是季報公司沒被跳過、被當半年報驗算而誤報紅燈。
+        # 那是這個概念的第五份實作，正是 periodicity.py 要消滅的東西。
+        if periodicity.report_window(d for d, _ in recent) != 2:
             continue                                  # 季報公司，本段不適用
         checked += 1
         four = sum(e for _, e in recent[:4])
@@ -353,6 +369,10 @@ def check_ttm_window() -> list[str]:
             bad.append(f"{sid}：ttm_eps={ttm} 等於最近 4 期加總（兩年），"
                        f"應為 2 期加總 {two:.2f}")
     print(f"  半年報公司 {checked} 檔，TTM 誤用 4 期 {len(bad)} 檔")
+    # 全市場向來有約 190~300 檔半年報公司；驗到 0 檔代表 eps_quarterly
+    # 或 valuations 沒讀到資料，不是「大家都正確」
+    if checked == 0:
+        bad.append("⚠️ 一檔半年報公司都沒驗到——eps_quarterly 或 valuations 可能沒讀到資料")
     return bad
 
 
@@ -412,6 +432,8 @@ def check_revenue() -> list[str]:
                        f"（{mine / theirs:.2f} 倍）")
     print(f"  比對 {checked} 筆，不符 {len(bad)} 筆，資料庫無對應 {missing} 筆")
     print(f"  涵蓋月份：{', '.join(sorted(months))}")
+    if checked < len(official) * MIN_COVERAGE:
+        bad.append(f"⚠️ 月營收涵蓋率過低：官方 {len(official)} 筆，資料庫只對到 {checked} 筆")
     return bad
 
 

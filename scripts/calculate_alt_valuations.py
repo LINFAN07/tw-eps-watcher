@@ -323,9 +323,16 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     # FCF = 營業現金流 + 資本支出（capex 為負值，加法等於扣除）
     cf_df["fcf"] = cf_df["operating_cf"] + cf_df["capex"]
 
-    # 半年報公司（興櫃）只有 6/12 月，固定取 4 期會把兩年當成 TTM。
-    # 與 P/E 共用同一份判定——先前這裡自寫一份且視窗是 8 期，
-    # 與 calculate_valuation 的 6 期不同步（註解卻宣稱一致）。
+    # 期數與 P/E 共用同一份判定（先前這裡自寫一份且視窗是 8 期，與 6 期不同步）。
+    #
+    # 但要講清楚實際行為：半年報公司走不到這裡。上面的 decumulate() 規則是
+    # 「該年度第 1 季直接採用，其餘減去同年前一季，缺前一季則剔除」，
+    # 而半年報只有 6/30（第 2 季）與 12/31（第 4 季），兩者的「同年前一季」
+    # 都不存在 → 全數被剔除 → cf_df 變空 → 卡在 MIN_PFCF_QTRS 就 return {}。
+    # 也就是說【半年報公司一律沒有 P/FCF 估值】，w 在此實務上恆為 4。
+    # 這在資料誠信上是安全的（不給估值好過給錯的），但若日後要支援，
+    # 該修的是 decumulate()——半年報的 6/30 本身就是年初至今的第一期，
+    # 應直接採用、12/31 減 6/30——而不是改這裡的 w。
     w = report_window(cf_df["quarter_end_date"])
 
     pfcf_series = []

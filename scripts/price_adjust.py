@@ -74,12 +74,14 @@ def back_adjust(dates: list[str], closes: list[float],
             continue                             # 除權息日早於所有股價，無基準可算
 
         f = official.get(ex_date)
-        if f is not None:
-            # 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
-            # 上限 5 純為防呆（因子再大就不可能是除權息了）。
-            if not 0 < f <= 5:
-                continue
-        else:
+        # 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
+        # 上限取 20：彌補虧損型減資 95% 的參考價約為前收的 20 倍，台灣不罕見；
+        # 先前設 5 會把減資 80% 以上的案例當成異常丟掉。
+        # 超界時【回退自算】而非整筆跳過——跳過等於那天完全不還原，
+        # 會在還原序列留下一個假跳空，比自算更差。
+        if f is not None and not 0 < f <= 20:
+            f = None
+        if f is None:
             cash, stock = events[ex_date]
             if cash <= 0 and stock <= 0:
                 continue

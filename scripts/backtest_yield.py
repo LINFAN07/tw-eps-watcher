@@ -113,7 +113,7 @@ def main():
     dates = data["dates"]
 
     print("組裝面板…")
-    adj = bt.adjusted_price_matrix(data["prices"], data["dividends"], dates)
+    adj = bt.adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
     factors = bt.share_factor_table(data["bvps"])
     eps_ttm = bt.fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors)
     bvps    = bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors)
