@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 import { adjustedMap } from '@/lib/priceAdjust'
 import { fetchExAdjustment } from '@/lib/exRights'
+import { reportWindow } from '@/lib/periodicity'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
   const all: { date: string; close_price: number }[] = []
@@ -97,9 +98,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   // 每季計算 TTM FCF per share（滾動 4 個「單季」合計）
   // FCF = operating_cf + capex（capex 通常為負），單位：元
   // FCF per share = 元 ÷ (千股 × 1000) = 元/股
+  // 期數與後端共用判定，不可寫死 4（見 lib/periodicity.ts）
+  const w = reportWindow(quarterly.map(q => q.date))
   const ttmFcf: { date: string; fcfPerShare: number }[] = []
-  for (let i = 3; i < quarterly.length; i++) {
-    const fcf = quarterly.slice(i - 3, i + 1).reduce((s, q) => s + q.fcf, 0)
+  for (let i = w - 1; i < quarterly.length; i++) {
+    const fcf = quarterly.slice(i - w + 1, i + 1).reduce((s, q) => s + q.fcf, 0)
     const fcfPs = fcf / (listedShares * 1000)
     if (fcfPs > 0) ttmFcf.push({ date: quarterly[i].date, fcfPerShare: fcfPs })
   }

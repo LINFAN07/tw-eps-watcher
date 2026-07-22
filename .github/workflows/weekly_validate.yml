@@ -27,6 +27,22 @@ jobs:
       # 抓出寫好卻沒掛排程的工作。此類缺陷不報錯、無症狀，只會讓某個資料欄位
       # 悄悄停在最後一次手動執行的值——專案已踩過兩次（品質指標重算、業外收支偵測）。
       # 不需要資料庫，純靜態檢查，故放在估值驗證之前先跑。
+      # 平行實作的一致性測試。back_adjust / report_window 各有 Python 與
+      # TypeScript 兩份，兩邊讀同一份 fixture（tests/fixtures/shared_cases.json）。
+      # 2026-07-22 一天之內漂移三次，靠註解寫「兩邊必須同步修改」擋不住。
+      # 純函式、不連資料庫，數秒完成，故放在最前面先擋。
+      - name: 平行實作一致性測試（Python 端）
+        run: python tests/test_shared.py
+
+      - name: 設定 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 平行實作一致性測試（TypeScript 端）
+        working-directory: frontend
+        run: npx --yes tsx ../tests/test_shared.ts
+
       - name: 排程稽核（確認每支腳本都真的會被執行）
         run: python scripts/audit_workflows.py
 

@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 import { adjustedMap } from '@/lib/priceAdjust'
 import { fetchExAdjustment } from '@/lib/exRights'
+import { reportWindow } from '@/lib/periodicity'
 
 // 取得一支股票的所有日收盤價（自動分頁，繞過 Supabase 1000 筆上限）
 // 中途任一頁失敗即拋出錯誤，避免靜默回傳截斷的不完整資料
@@ -39,12 +40,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     .select('quarter_end_date,eps')
     .eq('stock_id', code)
     .order('quarter_end_date')
-  if (!epsRaw || epsRaw.length < 4) return NextResponse.json({ error: 'Insufficient EPS' }, { status: 404 })
+  if (!epsRaw || epsRaw.length < 2) return NextResponse.json({ error: 'Insufficient EPS' }, { status: 404 })
 
-  // 計算 TTM EPS 序列（每季往回加 4 季）
-  const ttmSeries = epsRaw.slice(3).map((_, i) => {
-    const base = i + 3
-    const ttm = [0, 1, 2, 3].reduce((s, j) => s + Number(epsRaw[base - j].eps), 0)
+  // 計算 TTM EPS 序列。期數不可寫死 4——半年報公司（興櫃）只揭露 6/12 月，
+  // 加 4 期等於把兩年的獲利當成一年，河流圖的帶會整體上移約一倍、
+  // 與估值卡的數字兜不起來。判定與後端共用同一套規則（lib/periodicity.ts）。
+  const w = reportWindow(epsRaw.map(e => e.quarter_end_date))
+  const ttmSeries = epsRaw.slice(w - 1).map((_, i) => {
+    const base = i + w - 1
+    const ttm = Array.from({ length: w }, (_, j) => j)
+      .reduce((s, j) => s + Number(epsRaw[base - j].eps), 0)
     return { date: epsRaw[base].quarter_end_date, ttm }
   }).filter(e => e.ttm > 0)
 

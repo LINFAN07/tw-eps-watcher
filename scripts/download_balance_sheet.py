@@ -52,7 +52,13 @@ PROFILE_ENDPOINTS = [
     ("上櫃", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", False),
     ("興櫃", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_R", False),
 ]
+# 台股的慣用面額。僅供「這家公司是不是非典型面額」的比較基準，
+# 【不可】拿來當取不到面額時的替代值——那是把缺值變成數字（見 main 的 no_par）。
 DEFAULT_PAR = 10.0
+
+# 允許多少比例的股票因取不到面額而跳過。超過即視為來源異常並 exit 1：
+# 正常只有已下市、剛掛牌等零星個案，整批取不到必是端點欄名變更。
+MAX_NO_PAR_RATE = 0.15
 
 
 def _num(text: str) -> float | None:
@@ -199,6 +205,9 @@ def download_stock_bvps(stock_id: str, par: float, official_shares: int | None =
             "book_value_per_share": round(bvps, 4),
             "debt_ratio":           debt_ratio,
             "shares_thousand":      shares_thousand if shares_thousand > 0 else None,
+            # 一併存下這一季用的面額。沒有它，事後分不出「淨值算錯」與
+            # 「面額用錯」，也無法只重算面額變更後的季度（見 sql/patch_par_value_column.sql）
+            "par_value":            par,
         })
 
     if not rows:
@@ -269,12 +278,20 @@ def main():
 
     tracker = fm.FailureTracker("資產負債表下載")
     written_total = 0
+    no_par: list[str] = []
     for i, sid in enumerate(stock_ids, 1):
+        par = pars.get(sid)
+        if par is None:
+            # 取不到面額就跳過，不用預設值頂替——BVPS = 面額 × 權益 / 股本，
+            # 面額若是假設的，寫進去的淨值答不出「這是誰給的」（資料誠信第 3 條）。
+            # 這不是理論風險：TPEx 端點只要改欄名或該欄留空，上櫃／興櫃就會整批
+            # 落回預設值，而 KY 股（面額 1 元／0.5 元的主力）多在上櫃／興櫃——
+            # 2026-07-22 那次事故會完整重演，且這次不會有任何跡象。
+            no_par.append(sid)
+            print(f"[{i}/{total}] {sid}: 跳過（取不到面額）")
+            continue
         try:
-            # 取不到面額者（多為已下市，交易所名單已無該公司）沿用 10 元。
-            # 這是退路不是猜測：面額非 10 元的公司佔比低，且下市股不進排行榜。
-            written = download_stock_bvps(sid, pars.get(sid, DEFAULT_PAR),
-                                          official_shares.get(sid))
+            written = download_stock_bvps(sid, par, official_shares.get(sid))
         except fm.FinMindError as e:
             tracker.record(sid, e)
             written = 0
@@ -284,6 +301,15 @@ def main():
         time.sleep(CALL_INTERVAL)
 
     print(f"\n✅ 完成，共寫入 {written_total} 筆每股淨值資料")
+    if no_par:
+        rate = len(no_par) / max(total, 1)
+        print(f"⚠️  {len(no_par)} 支取不到面額而跳過（{rate:.1%}）：{no_par[:10]}")
+        # 面額涵蓋率是「TPEx 欄名漂移」唯一看得見的訊號。正常只有已下市、
+        # 剛掛牌等零星個案；一旦某個市場整批取不到，這個比例會暴增。
+        if rate > MAX_NO_PAR_RATE:
+            print(f"❌ 面額涵蓋率過低（跳過 {rate:.1%} > 門檻 {MAX_NO_PAR_RATE:.0%}），"
+                  f"多半是交易所端點欄名變更——請先確認 fetch_par_values 再重跑")
+            sys.exit(1)
     tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
 

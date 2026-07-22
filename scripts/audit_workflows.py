@@ -36,6 +36,9 @@ NO_SCHEDULE_OK = {
     # 共用模組，非可執行工作
     "finmind_client.py":              "共用模組",
     "price_adjust.py":                "共用純函式模組",
+    "periodicity.py":                 "共用純函式模組（季報／半年報的期數判定）",
+    "ex_factors.py":                  "共用模組（除權息還原因子的整表快取）",
+    "backtest_yield.py":              "殖利率訊號回測，需要時手動跑（同 backtest_valuation.py）",
     # 手動維運工具
     "cleanup_inactive_stocks.py":     "手動清理下市股",
     "backtest_valuation.py":          "回測，需要時手動跑",
