@@ -2,6 +2,9 @@
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { getTrackRecord, getWorstTrackRecord } from '@/lib/backtest'
+import {
+  getYieldTrackRecord, getYieldOverall, YIELD_HORIZON, YIELD_RANK_GROUP, YIELD_CAVEATS,
+} from '@/lib/yieldBacktest'
 import type { BandLevel } from '@/lib/bandStability'
 
 export interface LeaderboardRow {
@@ -20,6 +23,8 @@ export interface LeaderboardRow {
   operating_margin?: number | null
   /** 估值帶穩定度；僅 P/E 與 P/B 有值（其餘模型未驗證預測力，見 lib/bandStability.ts）*/
   band_level?: BandLevel | null
+  /** 當下現金殖利率（%）；僅「便宜×高殖利率」榜有值 */
+  dividend_yield?: number | null
   stocks: { name: string; industry: string; market: string } | null
   models?: string[]  // 多模型共識標籤，如 ['P/E', 'P/B', 'P/FCF']
 }
@@ -30,12 +35,14 @@ export interface LeaderboardData {
   ps: LeaderboardRow[]
   pfcf: LeaderboardRow[]
   consensus: LeaderboardRow[]
+  peYield: LeaderboardRow[]
 }
 
-type Model = 'pe' | 'pb' | 'ps' | 'pfcf' | 'consensus'
+type Model = 'pe' | 'pb' | 'ps' | 'pfcf' | 'consensus' | 'peYield'
 
 const MODEL_META: Record<Model, { label: string; desc: string }> = {
   consensus: { label: '多模型', desc: '共識精選' },
+  peYield:   { label: '高殖利', desc: '便宜×高息' },
   pe:        { label: 'P/E',   desc: '獲利估值' },
   pb:        { label: 'P/B',   desc: '資產估值' },
   ps:        { label: 'P/S',   desc: '營收估值' },
@@ -79,7 +86,9 @@ const LOSS_TIERS   = [{ min: 0, cls: 'text-red-500' }, { min: -Infinity, cls: 't
 const ROE_TIERS    = [{ min: 15, cls: 'text-green-600' }, { min: 8, cls: 'text-amber-500' }, ...LOSS_TIERS]
 const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-amber-500' }, ...LOSS_TIERS]
 
-export default function CheapLeaderboardClient({ data }: { data: LeaderboardData }) {
+export default function CheapLeaderboardClient(
+  { data, yieldThreshold }: { data: LeaderboardData; yieldThreshold: number },
+) {
   const [model, setModel]               = useState<Model>('consensus')
   const [industry, setIndustry]         = useState<string>('全部')
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
@@ -178,7 +187,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         {/* 帶寬只在 P/E 與 P/B 驗證過。共識榜的成員本就含 P/E、P/B 便宜票，
             同樣算得出帶寬（取投票模型中最發散者），故一併提供開關；
             P/S、P/FCF 榜確實沒有資料可篩，維持不顯示。 */}
-        {(model === 'pe' || model === 'pb' || model === 'consensus') && (
+        {(model === 'pe' || model === 'pb' || model === 'consensus' || model === 'peYield') && (
           <QualityToggle
             active={excludeDiffuse}
             onClick={() => setExcludeDiffuse(v => !v)}
@@ -196,6 +205,8 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         </p>
       )}
 
+      {model === 'peYield' && <YieldIntro threshold={yieldThreshold} />}
+
       {filtered.length === 0 ? (
         <p className="text-gray-400 text-center py-8">此條件目前沒有符合的股票</p>
       ) : (
@@ -209,6 +220,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 <th className="pb-3 pr-4 font-medium hidden md:table-cell">產業</th>
                 <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">ROE</th>
                 <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">利益率</th>
+                {model === 'peYield' && (
+                  <th className="pb-3 pr-4 font-medium text-right">殖利率</th>
+                )}
                 <th className="pb-3 pr-4 font-medium text-right">現價</th>
                 <th className="pb-3 pr-4 font-medium text-right hidden sm:table-cell">
                   {model === 'consensus' ? '參考便宜價' : '便宜價'}
@@ -229,15 +243,20 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 // 此模型在該產業的歷史表現。只在落後同業時標示，不標好消息——
                 // 避免徽章泛濫。呈現一律中性：樣本外檢驗顯示產業差異不會延續
                 // （見 lib/backtest.ts 的 OOS_CAVEAT），不該讀成預警。
+                // 「便宜×高殖利率」用它自己的回測，不可套用單模型 P/E 的實績——
+                // 篩選條件不同就是不同的策略（見 lib/yieldBacktest.ts）
                 const trap = model === 'consensus'
                   ? getWorstTrackRecord(r.models, r.stocks?.industry)
+                  : model === 'peYield'
+                  ? getYieldTrackRecord(r.stocks?.industry)
                   : getTrackRecord(model, r.stocks?.industry)
                 // 把來源模型帶進個股頁，估值卡才會預設顯示使用者剛才在看的那個。
                 // 否則會出現「P/B 榜說便宜，點進去只看到 P/E」的矛盾。
                 // 共識榜是多模型投票，沒有單一來源可帶。
+                // peYield 的入選依據是 P/E 便宜，個股頁沒有這個模型，故帶 pe
                 const href = model === 'consensus'
                   ? `/stock/${r.stock_id}`
-                  : `/stock/${r.stock_id}?model=${model}`
+                  : `/stock/${r.stock_id}?model=${model === 'peYield' ? 'pe' : model}`
                 return (
                   <tr key={r.stock_id} className="border-b border-gray-50 transition-colors hover:bg-gray-50">
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
@@ -307,6 +326,11 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                         : Math.abs(r.operating_margin) > 100 ? '大虧'
                         : `${r.operating_margin.toFixed(1)}%`}
                     </td>
+                    {model === 'peYield' && (
+                      <td className="py-3 pr-4 text-right font-medium text-blue-600">
+                        {r.dividend_yield != null ? `${r.dividend_yield.toFixed(2)}%` : '—'}
+                      </td>
+                    )}
                     <td className="py-3 pr-4 text-right font-medium">{r.current_price}</td>
                     <td className="py-3 pr-4 text-right text-green-600 hidden sm:table-cell">{r.cheap_price}</td>
                     <td className="py-3 text-right">
@@ -322,6 +346,67 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * 「便宜×高殖利率」榜的說明與實績。
+ *
+ * 三組數字必須一起出現：榜單條件、單獨 P/E、全市場等權。少了後兩者，
+ * 使用者無從判斷 10.9% 是好是壞；只給榜單自己的數字等於暗示它很厲害。
+ */
+function YieldIntro({ threshold }: { threshold: number }) {
+  const rank = getYieldOverall(YIELD_RANK_GROUP)
+  const pe   = getYieldOverall('P/E 便宜')
+  const uni  = getYieldOverall('全市場等權（對照）')
+  const rows = [
+    { label: '本榜單條件', row: rank, strong: true },
+    { label: '單獨 P/E 便宜', row: pe,  strong: false },
+    { label: '全市場等權', row: uni, strong: false },
+  ].filter(r => r.row)
+
+  return (
+    <div className="mt-1 mb-2 text-xs text-gray-500 space-y-2">
+      <p>
+        P/E 判定「便宜」，且現金殖利率落在全市場前 20%
+        {Number.isFinite(threshold) && `（目前門檻 ≥ ${threshold.toFixed(2)}%）`}。
+        排序依折價幅度，不是殖利率高低——回測驗證的是這個組合，不是「殖利率越高越好」。
+      </p>
+
+      {rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="text-xs">
+            <thead className="text-gray-400">
+              <tr>
+                <th className="pr-4 pb-1 font-medium text-left">歷史實績（持有 {YIELD_HORIZON} 個月）</th>
+                <th className="pr-4 pb-1 font-medium text-right">報酬中位數</th>
+                <th className="pr-4 pb-1 font-medium text-right">勝過 0050</th>
+                <th className="pb-1 font-medium text-right">樣本</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(({ label, row, strong }) => (
+                <tr key={label} className={strong ? 'text-gray-800 font-medium' : ''}>
+                  <td className="pr-4 py-0.5">{label}</td>
+                  <td className="pr-4 py-0.5 text-right">{row!.median.toFixed(1)}%</td>
+                  <td className="pr-4 py-0.5 text-right">{row!.winRate.toFixed(1)}%</td>
+                  <td className="py-0.5 text-right">{row!.n.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <details>
+        <summary className="cursor-pointer text-gray-400 hover:text-gray-600">
+          這些數字的但書（{YIELD_CAVEATS.length} 條，請務必看過）
+        </summary>
+        <ul className="mt-1 ml-4 list-disc space-y-1 text-gray-400">
+          {YIELD_CAVEATS.map(c => <li key={c}>{c}</li>)}
+        </ul>
+      </details>
+    </div>
   )
 }
 

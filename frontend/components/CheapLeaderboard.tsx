@@ -1,9 +1,11 @@
 import { getSupabase } from '@/lib/supabase'
 import { isPeUnreliable } from '@/lib/peReliability'
 import { getBandStability } from '@/lib/bandStability'
+import { HIGH_YIELD_PCTILE } from '@/lib/yieldBacktest'
 import CheapLeaderboardClient, { type LeaderboardRow, type LeaderboardData } from './CheapLeaderboardClient'
 
 const PAGE = 1000
+const TOP_N = 50   // 每個榜單顯示的名次數
 
 /** 各模型的 (便宜, 合理, 昂貴) 倍數欄位，供計算估值帶寬 */
 const RATIO_COLS: Record<string, [string, string, string] | null> = {
@@ -80,9 +82,48 @@ async function fetchModel(
     rows = rows.filter(r => r.pb_reliable !== false)
   }
 
+  // 回傳完整候選名單（不截斷）：「便宜×高殖利率」榜要從全部便宜股裡取交集，
+  // 若先截成前 50 名再交集，選出的會是「前 50 名中的高殖利率股」而非真正的交集
   return rows
     .sort((a, b) => (a.current_price / a.cheap_price) - (b.current_price / b.cheap_price))
-    .slice(0, 50)
+}
+
+/** 線性內插分位數，與 pandas quantile 的預設行為一致（回測用的就是它） */
+function quantile(sorted: number[], q: number): number {
+  const pos = (sorted.length - 1) * q
+  const lo = Math.floor(pos)
+  return sorted[lo] + (sorted[Math.ceil(pos)] - sorted[lo]) * (pos - lo)
+}
+
+/**
+ * 全市場當下的現金殖利率，以及「高殖利率」的橫斷面門檻。
+ *
+ * 母體限定為「有 TTM 現金股利」者，與回測的 `yld.where(div > 0)` 一致：
+ * 不配息的公司不是殖利率 0，是沒有殖利率，納入母體會把門檻整個往下拉。
+ */
+async function fetchYields(db: ReturnType<typeof getSupabase>) {
+  const rows: Record<string, unknown>[] = []
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page, error } = await db.from('valuations')
+      // stocks!inner 只為套用下市過濾，不需要 stocks 的其他欄位
+      .select('stock_id,current_price,yield_ttm_div,stocks!inner(delisted_at)')
+      .gt('current_price', 0)
+      .gt('yield_ttm_div', 0)
+      .is('stocks.delisted_at', null)
+      .order('stock_id')
+      .range(offset, offset + PAGE - 1)
+    // 故障要拋出，不可吞成空清單：否則暫時性 DB 錯誤會讓門檻算錯、榜單靜默失真
+    if (error) throw new Error(`殖利率查詢失敗：${error.message}`)
+    if (!page) break
+    rows.push(...(page as unknown as Record<string, unknown>[]))
+    if (page.length < PAGE) break
+  }
+
+  const yields = new Map<string, number>(
+    rows.map(r => [r.stock_id as string,
+                   (Number(r.yield_ttm_div) / Number(r.current_price)) * 100]))
+  const sorted = [...yields.values()].sort((a, b) => a - b)
+  return { yields, threshold: sorted.length ? quantile(sorted, HIGH_YIELD_PCTILE) : Infinity }
 }
 
 async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<LeaderboardRow[]> {
@@ -182,22 +223,38 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
       if (countDiff !== 0) return countDiff
       return (a.current_price / a.cheap_price) - (b.current_price / b.cheap_price)
     })
-    .slice(0, 50)
+    .slice(0, TOP_N)
 }
 
 export default async function CheapLeaderboard() {
   const db = getSupabase()
-  const [pe, pb, ps, pfcf, consensus] = await Promise.all([
+  const [pe, pb, ps, pfcf, consensus, yieldData] = await Promise.all([
     fetchModel(db, 'pe'),
     fetchModel(db, 'pb'),
     fetchModel(db, 'ps'),
     fetchModel(db, 'pfcf'),
     fetchConsensus(db),
+    fetchYields(db),
   ])
+
+  // 便宜 × 高殖利率：P/E 便宜股中，殖利率落在全市場前 20% 者。
+  // 排序沿用折價幅度而非殖利率高低——回測驗證的是「便宜」訊號加上高殖利率條件，
+  // 不是「殖利率越高越好」，改用殖利率排序等於展示一個沒測過的排列。
+  const peYield = pe
+    .filter(r => (yieldData.yields.get(r.stock_id) ?? 0) >= yieldData.threshold)
+    .map(r => ({ ...r, dividend_yield: yieldData.yields.get(r.stock_id) ?? null }))
+    .slice(0, TOP_N)
 
   if (pe.length + pb.length + ps.length + pfcf.length === 0) {
     return <p className="text-gray-400 text-center py-8">目前沒有被低估的股票</p>
   }
 
-  return <CheapLeaderboardClient data={{ pe, pb, ps, pfcf, consensus }} />
+  return <CheapLeaderboardClient data={{
+    pe: pe.slice(0, TOP_N),
+    pb: pb.slice(0, TOP_N),
+    ps: ps.slice(0, TOP_N),
+    pfcf: pfcf.slice(0, TOP_N),
+    consensus,
+    peYield,
+  }} yieldThreshold={yieldData.threshold} />
 }

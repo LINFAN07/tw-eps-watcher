@@ -30,7 +30,7 @@ export interface TrackRecord extends IndustryRow {
 }
 
 /** 超額報酬多少才算有意義。±3 個百分點以內視為雜訊，不給使用者方向性暗示 */
-const EXCESS_THRESHOLD = 3
+export const EXCESS_THRESHOLD = 3
 
 /**
  * 這句必須跟著每一則產業實績一起出現。
@@ -46,7 +46,7 @@ const EXCESS_THRESHOLD = 3
  * 也就是說這些數字只描述過去，對未來沒有預測力。資料本身是真的、
  * 值得呈現（本站定位是模型體檢報告），但不可讓使用者讀成預警。
  */
-const OOS_CAVEAT = '此為歷史紀錄，非預測——樣本外檢驗顯示產業間的差異不會延續'
+export const OOS_CAVEAT = '此為歷史紀錄，非預測——樣本外檢驗顯示產業間的差異不會延續'
   + '（前後期相關性 −0.06，前期落後的產業後期反而略好）。'
 
 /**

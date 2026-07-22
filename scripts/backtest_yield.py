@@ -24,6 +24,7 @@ backtest_yield.py — 「便宜 × 高殖利率」訊號回測
 低估，配股頻繁的公司尤其嚴重。此處沿用 backtest_valuation.share_factor_table()。
 """
 
+import json
 import os
 import sys
 import pandas as pd
@@ -35,6 +36,10 @@ import backtest_valuation as bt
 TOP_YIELD = 0.80        # 高殖利率 = 橫斷面前 20%
 TTM_MONTHS = 12         # 殖利率的股利累計期
 MIN_INDUSTRY_N = 30     # 分產業表的最少樣本數（與主回測一致）
+
+# 上線成榜單的組合。前端顯示的實績必須對應榜單的實際篩選條件，
+# 不可拿「P/E 便宜」或「高殖利率單獨」的數字頂替——那是別的策略的成績單。
+RANK_GROUP = "P/E 便宜 × 高殖利率"
 
 
 # ------------------------------------------------------------ 殖利率面板
@@ -108,6 +113,62 @@ def by_industry(adj: pd.DataFrame, mask: pd.DataFrame, model: str,
     return out[out["樣本數"] >= MIN_INDUSTRY_N].round(2)
 
 
+def export_frontend(overall: pd.DataFrame, ind: pd.DataFrame, dates: list[str]) -> None:
+    """
+    產生前端用的統計檔。獨立於 backtestStats.ts：
+    那支由 backtest_valuation.py 整檔覆寫，兩邊共用一個檔會互相蓋掉。
+
+    只輸出榜單真正會顯示的三組對照，不輸出 P/B 與「連三年配息」變體——
+    榜單沒做那些，檔案裡放著只會被誤用。
+    """
+    def rows(df):
+        return ",\n".join("  " + json.dumps(r, ensure_ascii=False) for r in df.to_dict("records"))
+
+    ov = (overall[overall["組別"].isin([RANK_GROUP, "P/E 便宜", "全市場等權（對照）"])]
+          .rename(columns={"組別": "group", "樣本數": "n", "報酬中位數": "median",
+                           "報酬平均": "mean", "0050同期中位": "bench",
+                           "勝率%": "winRate", "正報酬率%": "positiveRate"}))
+    bi = (ind[ind["model"] == RANK_GROUP].drop(columns=["model"])
+          .rename(columns={"樣本數": "n", "報酬中位數": "median", "勝過0050": "winRate",
+                           "同業母體": "peer", "超額": "excess"}))
+
+    ts = f"""// 由 scripts/backtest_yield.py 產生，請勿手動編輯。
+// 重跑回測後此檔會被覆寫；判讀邏輯寫在 lib/yieldBacktest.ts。
+
+export interface YieldOverallRow {{
+  horizon: number; group: string; n: number
+  median: number; mean: number; bench: number; winRate: number; positiveRate: number
+}}
+
+export interface YieldIndustryRow {{
+  industry: string; n: number
+  median: number; winRate: number; peer: number; excess: number
+}}
+
+/** 榜單的篩選條件，也是 OVERALL 中代表榜單本身的那一組 */
+export const YIELD_RANK_GROUP = '{RANK_GROUP}'
+
+/** 回測期間取自資料本身的第一與最後一個月末交易日 */
+export const YIELD_BACKTEST_PERIOD = {{ from: '{dates[0]}', to: '{dates[-1]}', months: {len(dates)} }}
+
+/** 分產業結果的持有期（月） */
+export const YIELD_HORIZON = 12
+
+export const YIELD_OVERALL: YieldOverallRow[] = [
+{rows(ov)}
+]
+
+/** 僅含 {RANK_GROUP} 的分產業實績 */
+export const YIELD_BY_INDUSTRY: YieldIndustryRow[] = [
+{rows(bi)}
+]
+"""
+    path = os.path.join(os.path.dirname(__file__), "..", "frontend", "lib", "backtestYieldStats.ts")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(ts)
+    print(f"前端統計檔已更新：{os.path.normpath(path)}")
+
+
 def main():
     data = bt.load_all()
     dates = data["dates"]
@@ -120,8 +181,9 @@ def main():
     ttm_div = ttm_dividend_panel(data["dividends"], factors, dates)
 
     high, steady = yield_masks(adj, ttm_div)
-    pe_cheap = bt.cheap_mask(adj, eps_ttm, bt.PE_MIN, bt.PE_MAX)
-    pb_cheap = bt.cheap_mask(adj, bvps,    bt.PB_MIN, bt.PB_MAX)
+    # cheap_mask 第二個回傳值是折價倍數，本腳本只看訊號本身
+    pe_cheap, _ = bt.cheap_mask(adj, eps_ttm, bt.PE_MIN, bt.PE_MAX)
+    pb_cheap, _ = bt.cheap_mask(adj, bvps,    bt.PB_MIN, bt.PB_MAX)
     print(f"  月數 {len(dates)}、股票 {adj.shape[1]} 支、"
           f"高殖利率訊號 {int(high.sum().sum())} 格")
 
@@ -130,7 +192,7 @@ def main():
         "高殖利率（單獨）":        high,
         "高殖利率＋連三年配息":    steady,
         "P/E 便宜":               pe_cheap,
-        "P/E 便宜 × 高殖利率":     pe_cheap & high,
+        RANK_GROUP:               pe_cheap & high,
         "P/E 便宜 × 高殖利率＋連三年": pe_cheap & steady,
         "P/B 便宜":               pb_cheap,
         "P/B 便宜 × 高殖利率":     pb_cheap & high,
@@ -145,12 +207,13 @@ def main():
     ind_base = uni[uni["horizon"] == 12].groupby("industry")["ret"].median() * 100
 
     ind = pd.concat([by_industry(adj, groups[m], m, ind_base, industry)
-                     for m in ["P/E 便宜 × 高殖利率", "P/B 便宜 × 高殖利率"]],
+                     for m in [RANK_GROUP, "P/B 便宜 × 高殖利率"]],
                     ignore_index=True).sort_values(["model", "超額"], ascending=[True, False])
 
     os.makedirs(bt.OUT_DIR, exist_ok=True)
     overall.to_csv(os.path.join(bt.OUT_DIR, "yield_overall.csv"), index=False, encoding="utf-8-sig")
     ind.to_csv(os.path.join(bt.OUT_DIR, "yield_by_industry.csv"), index=False, encoding="utf-8-sig")
+    export_frontend(overall, ind, dates)
 
     pd.set_option("display.unicode.east_asian_width", True, "display.width", 220)
     print("\n=== 整體結果（報酬單位 %）===")
