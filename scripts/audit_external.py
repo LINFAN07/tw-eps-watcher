@@ -82,6 +82,9 @@ BVPS_BAD_RATE_LIMIT = 0.08
 
 QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
 
+# 判斷季報／半年報時回看幾期，必須與 calculate_valuation.EPS_WINDOW_LOOKBACK 相同
+LOOKBACK = 6
+
 
 class AuditError(Exception):
     """來源故障。與「該筆確實沒有資料」不同，必須讓工作失敗而非回報通過。"""
@@ -264,6 +267,13 @@ def check_ttm_window() -> list[str]:
 
     判定方式不依賴期別月份的判斷邏輯（那正是出錯的地方），改為直接驗算：
     若 ttm_eps 明顯接近 4 期加總、而與 2 期加總相差甚遠，就是誤用了 4 期。
+
+    ⚠️ 兩個必須容忍的誤差來源，門檻因此用相對值而非絕對值：
+      1. ttm_eps 是【股數調整後】的 EPS 加總（見 calculate_valuation.share_factors），
+         這裡拿原始 eps 比對，配過股的公司本來就對不齊。
+      2. 4 期與 2 期加總有時只差一點點（7558 只差 0.01），絕對門檻會卡在邊界誤報。
+    要求「與 4 期的差距 < 2%」且「4 期與 2 期相差 > 20%」才判定為誤用，
+    寧可漏報也不要天天喊狼來了——稽核一旦開始誤報就沒人看了。
     """
     print("\n=== D. 半年報公司的 TTM 期數 ===")
     eps = {}
@@ -294,13 +304,19 @@ def check_ttm_window() -> list[str]:
         ttm = vals.get(sid)
         if ttm is None or len(recs) < 4:
             continue
-        recent = sorted(recs, reverse=True)[:8]
-        if {int(d[5:7]) for d, _ in recent[:6]} > {6, 12}:
+        # 回看期數必須與 calculate_valuation._eps_window 一致，否則兩邊
+        # 對同一支股票會給出不同答案（2026-07-22 曾因一邊 8 期、一邊 6 期而誤報）
+        recent = sorted(recs, reverse=True)[:LOOKBACK]
+        if {int(d[5:7]) for d, _ in recent} > {6, 12}:
             continue                                  # 季報公司，本段不適用
         checked += 1
         four = sum(e for _, e in recent[:4])
         two = sum(e for _, e in recent[:2])
-        if abs(float(ttm) - four) < 0.01 and abs(four - two) > 0.01:
+        if abs(two) < 0.01 or abs(four) < 0.01:
+            continue                                  # 接近 0，比值無意義
+        near_four = abs(float(ttm) - four) / abs(four) < 0.02
+        differs = abs(four - two) / abs(two) > 0.20
+        if near_four and differs:
             bad.append(f"{sid}：ttm_eps={ttm} 等於最近 4 期加總（兩年），"
                        f"應為 2 期加總 {two:.2f}")
     print(f"  半年報公司 {checked} 檔，TTM 誤用 4 期 {len(bad)} 檔")

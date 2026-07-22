@@ -35,6 +35,10 @@ PE_MIN,   PE_MAX                = 3, 200
 # 其中 18 支原本顯示「便宜」，比沒有估值更容易誤導。
 MIN_PE_SAMPLES = 40
 
+# 判斷「季報或半年報」時回看幾期。稽核（audit_external.check_ttm_window）
+# 必須用同一個值，否則兩邊對同一支股票會給出不同答案。
+EPS_WINDOW_LOOKBACK = 6
+
 
 def _fetch_paged(table, filters: dict, columns: str) -> list:
     """分頁取得 Supabase 資料（繞過 1000 筆上限），以第一個欄位排序"""
@@ -190,8 +194,12 @@ def _eps_window(eps_df: pd.DataFrame) -> int:
     """
     興櫃半年報只有 6/30 與 12/31，用 2 期；上市/上櫃季報用 4 期。
 
-    只看最近 8 期，不看全部歷史——早年揭露頻率不同或單筆資料異常，
+    只看最近 6 期，不看全部歷史——早年揭露頻率不同或單筆資料異常，
     會讓整支股票被誤判成季報，TTM 變成「最近 4 個半年」＝兩年獲利。
+
+    視窗長度取 6 期而非 8：季報 6 期＝1.5 年，已足以判斷頻率；
+    再往前拉只會多納入陳年的異常期別。5254 欣訊科技即為此例——
+    最近第 7 期是 2023-03-31，用 8 期視窗仍會被誤判成季報。
 
     2026-07-22 事故：4546 長亨的 EPS 全是 6/12 月，只有一筆 2020-03-31 例外，
     整支股票因此被判季報，ttm_eps 算成 12.98（正確 7.58，高估 71%），
@@ -201,7 +209,7 @@ def _eps_window(eps_df: pd.DataFrame) -> int:
     已知限制：若某公司真的在期間中途改變揭露頻率，歷史序列前段的 TTM
     會用錯期數。半年報公司幾乎都是興櫃小型股、鮮少改頻率，故不為此增加複雜度。
     """
-    recent = eps_df.nlargest(8, "quarter_end_date")
+    recent = eps_df.nlargest(EPS_WINDOW_LOOKBACK, "quarter_end_date")
     return 2 if set(recent["quarter_end_date"].dt.month) <= {6, 12} else 4
 
 

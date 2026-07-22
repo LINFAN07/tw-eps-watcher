@@ -224,8 +224,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 const isPotential = !isKY && !isTopQuality
                   && r.operating_margin != null && r.operating_margin >= 10
                   && r.roe != null && r.roe >= 0
-                // 回測顯示此模型在該產業的便宜訊號長期落後同業 → 標記為價值陷阱。
-                // 只標警示不標好消息：避免徽章泛濫，也因為「別接刀」比「可以買」更該講。
+                // 此模型在該產業的歷史表現。只在落後同業時標示，不標好消息——
+                // 避免徽章泛濫。呈現一律中性：樣本外檢驗顯示產業差異不會延續
+                // （見 lib/backtest.ts 的 OOS_CAVEAT），不該讀成預警。
                 const trap = model === 'consensus'
                   ? getWorstTrackRecord(r.models, r.stocks?.industry)
                   : getTrackRecord(model, r.stocks?.industry)
