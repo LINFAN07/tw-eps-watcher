@@ -83,9 +83,15 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
   const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
   const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
   const [excludeKY, setExcludeKY]       = useState(true)   // 排除 KY 股（見 KY_TOOLTIP）
-  // 預設不啟用：帶寬只是「訊號較不可信」，不像 KY 股那樣有負的絕對報酬，
-  // 直接隱藏會讓使用者連選擇的機會都沒有
-  const [excludeDiffuse, setExcludeDiffuse] = useState(false)
+  // 2026-07-22 改為預設啟用。回測（38,274 筆便宜訊號、持有 12 個月）顯示
+  // 帶寬五分位 Q1→Q5 的報酬中位數 +10.00%→+3.39%、正報酬率 66.4%→54.9%，
+  // 幾乎單調遞減，P/E 與 P/B 分開看都成立；排除後榜單仍有 157/392 檔，不枯竭。
+  // 原本顧慮「直接隱藏會讓使用者連選擇的機會都沒有」——改以開關旁顯示
+  // 「已排除 N 檔」解決：系統做了判斷就要說出來，一鍵即可看回來。
+  // 已知分歧：「勝過 0050 的比率」在帶寬分組中是反向的（38.7%→47.2%），
+  // 帶寬大的絕對報酬差、相對 0050 略好，因為它們較常發生在 0050 也不好的時期。
+  // 三個指標中兩個支持排除，此處採信多數（同 lib/bandStability.ts 的立場）。
+  const [excludeDiffuse, setExcludeDiffuse] = useState(true)
 
   const rows = data[model]
 
@@ -100,12 +106,13 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
     }, new Map<string, number>())
   ).sort((a, b) => b[1] - a[1]).map(([ind]) => ind)], [rows])
 
-  const filtered = rowsWithRoe
+  // 帶寬篩選單獨留到最後：要先知道「其他條件都通過、只差帶寬」的有幾檔，
+  // 才能在開關上顯示排除數量。filter 可交換，拆開不影響結果。
+  const beforeDiffuse = rowsWithRoe
     // 永久排除虧損股：估值帶對虧損股無意義，不受品質篩選開關影響
     .filter(r => !((r.roe != null && r.roe < 0) || (r.operating_margin != null && r.operating_margin < 0)))
     .filter(r => industry === '全部' || (r.stocks?.industry || '其他') === industry)
     .filter(r => !excludeKY    || !isKYStock(r))
-    .filter(r => !excludeDiffuse || r.band_level !== 'diffuse')
     .filter(r => !filterRoe    || (r.roe ?? 0) >= 15)
     .filter(r => {
       if (!filterMargin) return true
@@ -114,6 +121,11 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
       const industry = r.stocks?.industry ?? ''
       return FINANCIAL_KEYWORDS.some(kw => industry.includes(kw))
     })
+
+  const diffuseCount = beforeDiffuse.filter(r => r.band_level === 'diffuse').length
+  const filtered = excludeDiffuse
+    ? beforeDiffuse.filter(r => r.band_level !== 'diffuse')
+    : beforeDiffuse
 
   // 共識 Tab：頂級優質（ROE≥15% 且利益率≥10%）置頂，其餘保持原排序
   const displayRows = model === 'consensus'
@@ -170,6 +182,7 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
             onClick={() => setExcludeDiffuse(v => !v)}
             label="排除估值帶發散"
             title={BAND_TOOLTIP}
+            count={diffuseCount}
           />
         )}
       </div>
@@ -329,11 +342,14 @@ function FilterBar({ industries, selected, onSelect }: {
   )
 }
 
-function QualityToggle({ active, onClick, label, title }: {
+function QualityToggle({ active, onClick, label, title, count }: {
   active: boolean
   onClick: () => void
   label: string
   title?: string
+  /** 這個開關目前濾掉幾檔。預設啟用的篩選必須把數量說出來，
+      否則使用者會以為看到的就是全部，不知道系統替他做了判斷。 */
+  count?: number
 }) {
   return (
     <button
@@ -346,6 +362,11 @@ function QualityToggle({ active, onClick, label, title }: {
       }`}
     >
       {active ? '✓ ' : ''}{label}
+      {count != null && count > 0 && (
+        <span className={active ? 'ml-1 opacity-80' : 'ml-1 text-gray-400'}>
+          （{active ? `已排除 ${count}` : `可排除 ${count}`} 檔）
+        </span>
+      )}
     </button>
   )
 }
