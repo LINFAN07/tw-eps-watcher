@@ -440,6 +440,10 @@ def main():
     overall.to_csv(os.path.join(OUT_DIR, "overall.csv"), index=False, encoding="utf-8-sig")
     by_ind.to_csv(os.path.join(OUT_DIR, "by_industry.csv"), index=False, encoding="utf-8-sig")
     signals.to_csv(os.path.join(OUT_DIR, "signals.csv"), index=False, encoding="utf-8-sig")
+    # 全市場母體也存檔：by_industry 的「同業母體」欄是用它算的，
+    # 少了它就無法在事後用一致的定義重做分析——例如檢驗產業標籤能不能外推
+    # （用前半期定義、後半期驗證），那需要逐期重算母體中位數。
+    uni.to_csv(os.path.join(OUT_DIR, "universe.csv"), index=False, encoding="utf-8-sig")
     export_frontend(overall, by_ind, dates)
 
     pd.set_option("display.unicode.east_asian_width", True, "display.width", 200)

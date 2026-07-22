@@ -11,6 +11,7 @@ logs/
 # 回測快取與逐筆訊號明細（可重跑產生，signals.csv 約 8MB，不進版控）
 .backtest_cache/
 backtest_results/signals.csv
+backtest_results/universe.csv
 
 # Python
 __pycache__/
