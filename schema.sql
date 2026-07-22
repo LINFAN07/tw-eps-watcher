@@ -422,3 +422,31 @@ ALTER TABLE valuations
 
 ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS price_date DATE;
+
+-- ─────────────────────────────────────────────────────────
+-- P/E 折價過深旗標（2026-07-22）
+--
+-- pe_reliable 只擋「獲利高峰／EPS 長期偏低／業外虛胖」，沒有擋折價過深。
+-- 但回測顯示 P/E 也有同樣的毛病——便宜價遠高於現價時，多半不是跌得便宜，
+-- 是歷史倍數已經不適用了（公司基本面劇變，早年的高倍數對現在沒有參考價值）。
+--
+-- 依據（持有 12 個月，逐月中位數的中位，已控制時點集中）：
+--     全市場等權（對照）  +3.48%
+--     折價 1.0~1.5 倍     +1.88%   （12,334 筆）
+--     折價 1.5~2 倍       +2.21%   （ 1,519 筆）
+--     折價 2~3 倍         +1.00%   （   511 筆）
+--     折價 >3 倍          -5.71%   （   206 筆，跨 57 個月）
+--
+-- 門檻 3 倍高於 P/B 的 2 倍（見 pb_reliable）：EPS 波動大，2 倍折價還可能是
+-- 景氣循環的谷底；淨值是存量、變動慢，P/B 帶一旦失真就是結構性的。
+--
+-- 為什麼獨立成新欄位，而不併進 pe_reliable：
+-- pe_reliable 是既有生成欄位，加條件必須 DROP 後重建，期間排行榜與推薦模型
+-- 都查不到它、網站會短暫報錯。純新增零風險，代價只是判斷散在兩個欄位。
+-- 前端在 lib/peReliability.isPeUnreliable() 把兩者一起檢查。
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS pe_deep_discount BOOLEAN
+  GENERATED ALWAYS AS (
+    cheap_price IS NOT NULL AND current_price > 0
+    AND cheap_price > current_price * 3
+  ) STORED;

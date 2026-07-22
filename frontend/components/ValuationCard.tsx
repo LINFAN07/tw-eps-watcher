@@ -23,6 +23,8 @@ interface Valuation {
   current_price: number
   status: string
   pe_reliable?: boolean | null
+  /** 便宜價 > 現價 3 倍：歷史倍數已不適用，不列入推薦（見 lib/peReliability.ts）*/
+  pe_deep_discount?: boolean | null
   warning?: string | null
   nonop_warning?: string | null
   capital_change_warning?: string | null

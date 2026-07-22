@@ -19,7 +19,7 @@ async function fetchModel(
 ): Promise<LeaderboardRow[]> {
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
-  const peExtra   = model === 'pe' ? ',pe_reliable,warning,nonop_warning' : ''
+  const peExtra   = model === 'pe' ? ',pe_reliable,pe_deep_discount,warning,nonop_warning' : ''
   const pbExtra   = model === 'pb' ? ',pb_reliable' : ''
   // 估值帶穩定度只在 P/E 與 P/B 驗證過預測力（見 lib/bandStability.ts），
   // 其餘模型不取倍數欄位，也不套用這兩者的門檻
@@ -55,6 +55,7 @@ async function fetchModel(
     current_price:    Number(r.current_price),
     cheap_price:      Number(r[priceCol]),
     pe_reliable:      (r.pe_reliable as boolean | null) ?? null,
+    pe_deep_discount: (r.pe_deep_discount as boolean | null) ?? null,
     pb_reliable:      (r.pb_reliable as boolean | null) ?? null,
     warning:          (r.warning as string | null) ?? null,
     nonop_warning:    (r.nonop_warning as string | null) ?? null,
@@ -87,7 +88,7 @@ async function fetchModel(
 async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<LeaderboardRow[]> {
   const fields = [
     'stock_id', 'current_price',
-    'status', 'cheap_price', 'pe_reliable', 'warning', 'nonop_warning',
+    'status', 'cheap_price', 'pe_reliable', 'pe_deep_discount', 'warning', 'nonop_warning',
     ...RATIO_COLS.pe!, ...RATIO_COLS.pb!,   // 估值帶寬：共識榜的成員本就含 P/E、P/B 便宜票
     'pb_status', 'pb_cheap_price', 'pb_reliable',
     'ps_status', 'ps_cheap_price',
@@ -122,7 +123,8 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     const peValid = r.status === '便宜'
       && r.cheap_price != null
       && !isPeUnreliable({
-        pe_reliable:   r.pe_reliable as boolean | null,
+        pe_reliable:      r.pe_reliable as boolean | null,
+        pe_deep_discount: r.pe_deep_discount as boolean | null,
         warning,
         nonop_warning: r.nonop_warning as string | null,
       })
