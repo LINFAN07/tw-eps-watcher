@@ -219,8 +219,9 @@ def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
     if factors is not None and not factors.empty:
         # 股本季度與財報季度未必逐一對齊（興櫃為半年報），故以 merge_asof 向前對應；
         # 對應不到者維持原值（因子 1），不猜、不外插
+        # merge_asof 要求左右兩表都依 on 鍵全域排序（by 分組不豁免此規則）
         df = pd.merge_asof(
-            df, factors.sort_values("quarter_end_date"),
+            df.sort_values("quarter_end_date"), factors.sort_values("quarter_end_date"),
             on="quarter_end_date", by="stock_id", direction="backward",
         )
         df[value_col] = df[value_col] * df["factor"].fillna(1.0)
