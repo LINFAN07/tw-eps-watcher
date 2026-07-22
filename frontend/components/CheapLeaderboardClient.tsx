@@ -9,6 +9,8 @@ export interface LeaderboardRow {
   current_price: number
   cheap_price: number
   pe_reliable?: boolean | null
+  /** P/B 估值是否可信；false 代表便宜價 > 現價 2 倍，多為歷史倍數已不適用 */
+  pb_reliable?: boolean | null
   warning?: string | null
   nonop_warning?: string | null
   ttm_eps?: number | null

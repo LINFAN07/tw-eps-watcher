@@ -20,6 +20,7 @@ async function fetchModel(
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
   const peExtra   = model === 'pe' ? ',pe_reliable,warning,nonop_warning' : ''
+  const pbExtra   = model === 'pb' ? ',pb_reliable' : ''
   // 估值帶穩定度只在 P/E 與 P/B 驗證過預測力（見 lib/bandStability.ts），
   // 其餘模型不取倍數欄位，也不套用這兩者的門檻
   const ratioCols = RATIO_COLS[model]
@@ -27,7 +28,7 @@ async function fetchModel(
   // stocks!inner + delisted_at is null：排除已下市股票。
   // 它們的價格凍結在最後一個交易日，目標價卻仍隨財報更新，折價越算越誇張，
   // 因此會專門往榜首跑（2026-07-21 實測前 6 名中有 4 名是下市股）。
-  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra}${ratioExtra},stocks!inner(name,industry,market)`
+  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra}${pbExtra}${ratioExtra},stocks!inner(name,industry,market)`
 
   // 排序鍵（現價 ÷ 便宜價）是計算值，資料庫無法排序，必須取回完整候選再排。
   // 原本只取前 200 筆，但「便宜」股最多達 525 支（P/B），
@@ -54,6 +55,7 @@ async function fetchModel(
     current_price:    Number(r.current_price),
     cheap_price:      Number(r[priceCol]),
     pe_reliable:      (r.pe_reliable as boolean | null) ?? null,
+    pb_reliable:      (r.pb_reliable as boolean | null) ?? null,
     warning:          (r.warning as string | null) ?? null,
     nonop_warning:    (r.nonop_warning as string | null) ?? null,
     ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
@@ -69,6 +71,13 @@ async function fetchModel(
   if (model === 'pe') {
     rows = rows.filter(r => !isPeUnreliable(r))
   }
+  // P/B 便宜價超過現價 2 倍者排除：那多半不是跌得便宜，是歷史倍數已不適用
+  // （公司基本面劇變，早年的高倍數對現在沒有參考價值）。回測實證：持有 12 個月，
+  // 折價 2~3 倍組 -4.94%、>3 倍組 -7.72%，全市場等權為 +3.48%（皆為逐月中位數
+  // 的中位，已控制時點集中）。門檻與判斷邏輯寫在 valuations.pb_reliable 生成欄位。
+  if (model === 'pb') {
+    rows = rows.filter(r => r.pb_reliable !== false)
+  }
 
   return rows
     .sort((a, b) => (a.current_price / a.cheap_price) - (b.current_price / b.cheap_price))
@@ -79,7 +88,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
   const fields = [
     'stock_id', 'current_price',
     'status', 'cheap_price', 'pe_reliable', 'warning', 'nonop_warning',
-    'pb_status', 'pb_cheap_price',
+    'pb_status', 'pb_cheap_price', 'pb_reliable',
     'ps_status', 'ps_cheap_price',
     'pfcf_status', 'pfcf_cheap_price',
     'ttm_eps', 'pb_book_value', 'operating_margin',
@@ -117,9 +126,14 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
         nonop_warning: r.nonop_warning as string | null,
       })
 
+    // P/B 同樣要擋掉便宜價 > 現價 2 倍者，否則失真股會繞過單模型榜的過濾、
+    // 從共識榜進來——共識榜的門檻是「兩個模型都說便宜」，不會自動排除失真票
+    const pbValid = r.pb_status === '便宜' && r.pb_cheap_price != null
+      && r.pb_reliable !== false
+
     const models: string[] = []
     if (peValid)                                                    models.push('P/E')
-    if (r.pb_status   === '便宜' && r.pb_cheap_price   != null)    models.push('P/B')
+    if (pbValid)                                                    models.push('P/B')
     if (r.ps_status   === '便宜' && r.ps_cheap_price   != null)    models.push('P/S')
     if (r.pfcf_status === '便宜' && r.pfcf_cheap_price != null)    models.push('P/FCF')
 
@@ -128,7 +142,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     // 參考便宜價必須取自「投了便宜票」的模型：若只挑第一個非 null 價格，
     // 會拿一個判定「昂貴」的模型價格去算折價，導致折價欄失真甚至變負值。
     const cheapPrice = peValid                                 ? Number(r.cheap_price)
-      : r.pb_status === '便宜' && r.pb_cheap_price   != null    ? Number(r.pb_cheap_price)
+      : pbValid                                                 ? Number(r.pb_cheap_price)
       : r.ps_status === '便宜' && r.ps_cheap_price   != null    ? Number(r.ps_cheap_price)
       : Number(r.pfcf_cheap_price)
 
