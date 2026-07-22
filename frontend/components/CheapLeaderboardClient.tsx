@@ -273,7 +273,9 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                       {r.roe != null ? `${r.roe.toFixed(1)}%` : '—'}
                     </td>
                     <td className={`py-3 pr-4 text-right font-medium hidden lg:table-cell ${r.operating_margin != null ? qualityBadge(r.operating_margin, MARGIN_TIERS) : 'text-gray-300'}`}>
-                      {r.operating_margin != null ? `${r.operating_margin.toFixed(1)}%` : '—'}
+                      {r.operating_margin == null ? '—'
+                        : Math.abs(r.operating_margin) > 100 ? '大虧'
+                        : `${r.operating_margin.toFixed(1)}%`}
                     </td>
                     <td className="py-3 pr-4 text-right font-medium">{r.current_price}</td>
                     <td className="py-3 pr-4 text-right text-green-600 hidden sm:table-cell">{r.cheap_price}</td>

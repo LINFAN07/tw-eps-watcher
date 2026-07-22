@@ -149,8 +149,19 @@ ALTER TABLE valuations
 
 -- 品質指標擴充
 ALTER TABLE valuations
-  ADD COLUMN IF NOT EXISTS operating_margin DECIMAL(6, 2),  -- TTM 營業利益率（%）
+  ADD COLUMN IF NOT EXISTS operating_margin DECIMAL(10, 2), -- TTM 營業利益率（%）
   ADD COLUMN IF NOT EXISTS debt_ratio       DECIMAL(6, 2);  -- 最新負債比（TotalLiabilities / TotalAssets × 100）
+
+-- 營業利益率放寬欄位寬度（2026-07-22）
+--
+-- 原為 DECIMAL(6,2)，最大只到 ±9999.99，calculate_quality_metrics.py 因此把值
+-- clamp 到 ±999.99。但邊界值是【假數字】——畫面顯示「-999.99%」，實際上 6467
+-- 是 -18,375%，使用者會當成真實比率讀。
+-- 曾考慮超出範圍寫 null，實測後否決：75 支比率 < -100% 的股票中，39 支 ROE ≥0
+-- （本業大虧、靠業外撐住帳面獲利），而排行榜正是靠「利益率 < 0」把它們擋掉，
+-- 寫 null 會讓其中 14 支便宜股漏進榜單。故改為放寬欄位、保留真實值。
+ALTER TABLE valuations
+  ALTER COLUMN operating_margin TYPE DECIMAL(10, 2);
 
 -- balance_sheet_quarterly 新增負債比欄位（每季追蹤）
 ALTER TABLE balance_sheet_quarterly

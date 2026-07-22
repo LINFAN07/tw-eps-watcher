@@ -76,9 +76,20 @@ def main():
             continue  # 無月營收（金融股等）→ 跳過
 
         raw = ttm_op_income / ttm_revenue * 100
-        results[stock_id] = round(max(-999.99, min(999.99, raw)), 2)
+        # 保留真實比率，不 clamp、也不因超出範圍寫 null。
+        #
+        # 原本 clamp 到 ±999.99 以避開 DECIMAL(6,2) 溢位，但邊界值是【假數字】——
+        # 使用者看到「-999.99%」會當成真實比率讀，實際上 6467 是 -18,375%。
+        #
+        # 曾考慮改寫 null，實測後否決：有 75 支比率 < -100%，其中 39 支 ROE ≥0
+        # （本業大虧、靠業外撐住帳面獲利），排行榜正是靠「利益率 < 0」把它們擋掉。
+        # 寫 null 會讓其中 14 支便宜股漏進榜單——那是最該被警示的類型。
+        # 故改為放寬欄位（DECIMAL(10,2)）容納真實值，極端值的可讀性由前端處理。
+        results[stock_id] = round(raw, 2)
 
-    print(f"  → 有效結果：{len(results)} 支")
+    extreme = sum(1 for v in results.values() if v is not None and abs(v) > 100)
+    print(f"  → 有效結果：{len(results)} 支（其中 {extreme} 支比率絕對值 >100%，"
+          f"營收極小、本業大幅虧損，數值為真實值不做截斷）")
 
     # ── 4. 逐筆寫入 valuations.operating_margin
     print("寫入 valuations.operating_margin...")

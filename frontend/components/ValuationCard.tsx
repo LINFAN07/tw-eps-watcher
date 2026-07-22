@@ -443,7 +443,13 @@ export default function ValuationCard({
           {marginTier != null && (
             <span className="flex items-center gap-1">
               <span>營業利益率</span>
-              <strong className={marginTier.valueColor}>{v.operating_margin!.toFixed(1)}%</strong>
+              {/* 營收極小的公司比率可達數千 %（如 −18,375%），數字既難讀又無參考性，
+                  改以文字表達。資料本身保留真實值，不在此截斷。 */}
+              <strong className={marginTier.valueColor}>
+                {Math.abs(v.operating_margin!) > 100
+                  ? (v.operating_margin! < 0 ? '本業嚴重虧損' : '—')
+                  : `${v.operating_margin!.toFixed(1)}%`}
+              </strong>
               <span className={`text-xs ${marginTier.labelColor}`}>{marginTier.label}</span>
             </span>
           )}
