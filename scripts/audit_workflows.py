@@ -38,10 +38,8 @@ NO_SCHEDULE_OK = {
     "price_adjust.py":                "共用純函式模組",
     "periodicity.py":                 "共用純函式模組（季報／半年報的期數判定）",
     "ex_factors.py":                  "共用模組（除權息還原因子的整表快取）",
-    "backtest_yield.py":              "殖利率訊號回測，需要時手動跑（同 backtest_valuation.py）",
     # 手動維運工具
     "cleanup_inactive_stocks.py":     "手動清理下市股",
-    "backtest_valuation.py":          "回測，需要時手動跑",
     "test_download.py":               "開發測試用",
     # 已被取代的舊 patch 腳本（欄位改由下列腳本產生，依「不刪既有死碼」原則保留）
     "patch_low_eps_warning.py":       "warning 欄位已由 calculate_valuation.py 產生",

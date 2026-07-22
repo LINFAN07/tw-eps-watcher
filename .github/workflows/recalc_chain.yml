@@ -1,0 +1,123 @@
+name: 全庫重算鏈（手動觸發）
+
+# 純手動觸發，不設 cron。
+#
+# 為什麼要有這支：每次修正原始資料（面額、除權還原、TTM 期數…）之後，
+# 都必須依序重算估值、重跑回測，否則畫面上是新資料、回測實績卻是舊的。
+# 2026-07-22 這條鏈手動串了四次，每次都要記得順序與 --refresh，
+# 而且漏掉任何一步都不會報錯——只會讓前端顯示彼此不一致的數字。
+#
+# 為什麼不掛 cron：全鏈約 110 分鐘，免費額度每月 2,000 分鐘。
+# 回測本來就是「資料改了才需要重驗」，不是每天要跑的東西
+# （見 CLAUDE.md：backtest_valuation.py 不掛排程）。
+#
+# 順序不可調換：
+#   1. 估值必須先算完，回測才有正確的 valuations 可比對
+#   2. 回測必須帶 --refresh，否則會吃到修正前的 .backtest_cache
+#      （2026-07-22 踩過：schema 加欄位後沒清快取，結果看起來完全正常）
+#   3. 殖利率回測依賴 backtest_valuation 的面板，放最後
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_valuation:
+        description: '跳過估值重算（只重跑回測時勾選）'
+        type: boolean
+        default: false
+      skip_backtest:
+        description: '跳過回測（只重算估值時勾選）'
+        type: boolean
+        default: false
+
+jobs:
+  recalc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv pandas numpy
+
+      # 先跑純函式測試：平行實作若已漂移，重算出來的數字不可信，
+      # 與其花兩小時算出錯的東西，不如當場失敗
+      - name: 平行實作一致性測試
+        run: python tests/test_shared.py
+
+      - name: P/E 估值重算
+        if: ${{ !inputs.skip_valuation }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/calculate_valuation.py
+
+      - name: 替代估值重算（P/B・P/S・P/FCF・殖利率）
+        if: ${{ !inputs.skip_valuation }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/calculate_alt_valuations.py
+
+      # --refresh 不可省：快取只看檔案在不在、不看內容是否過期，
+      # 資料修正後不清就會拿舊值算，而且結果看起來完全正常
+      - name: 估值訊號回測（清快取重跑）
+        if: ${{ !inputs.skip_backtest }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/backtest_valuation.py --refresh
+
+      - name: 殖利率訊號回測
+        if: ${{ !inputs.skip_backtest }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/backtest_yield.py
+
+      # 回測結果要進版控前端才看得到（backtestStats.ts 由回測腳本產生）。
+      # signals.csv 與 universe.csv 已在 .gitignore，不會被帶進來。
+      - name: 提交回測結果
+        if: ${{ !inputs.skip_backtest }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backtest_results/ frontend/lib/backtestStats.ts
+          if git diff --staged --quiet; then
+            echo "回測結果無變動，不需提交"
+          else
+            git commit -m "chore: 全庫重算鏈更新回測結果
+
+          由 recalc_chain.yml 自動產生。觸發者：${{ github.actor }}"
+            git push
+          fi
+
+      - name: 對外比對稽核（確認重算後仍與交易所一致）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/audit_external.py
+
+      - name: 失敗 Email 通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          username: qwert0708@hotmail.com
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ [台股估值] 全庫重算鏈失敗"
+          to: qwert0708@hotmail.com
+          from: qwert0708@hotmail.com
+          body: |
+            全庫重算鏈執行失敗，資料庫可能停在半完成狀態
+            （部分股票已用新邏輯重算、部分仍是舊值）。
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
