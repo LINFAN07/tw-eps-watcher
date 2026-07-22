@@ -2,8 +2,12 @@
  * 回測結果的判讀邏輯（資料在 backtestStats.ts，由 Python 腳本產生）。
  *
  * 存在的理由：網站原本只說「這支便宜」，使用者很容易讀成「買了會賺」。
- * 回測顯示便宜訊號整體有 55% 的機率跑輸 0050，且在部分產業是價值陷阱，
- * 這些事實必須跟訊號本身一起出現，而不是藏在另一個頁面。
+ * 回測顯示便宜訊號整體有 55% 的機率跑輸 0050，這個事實必須跟訊號本身
+ * 一起出現，而不是藏在另一個頁面。
+ *
+ * 2026-07-22 修正呈現方式：分產業的數字原本被寫成「價值陷阱」等預警語，
+ * 但樣本外檢驗證明產業差異不會延續（見 OOS_CAVEAT）。數字照給——本站定位
+ * 是模型體檢報告——但一律中性陳述，不替使用者下「別碰」的判斷。
  */
 
 import { BY_INDUSTRY, OVERALL, INDUSTRY_HORIZON, type IndustryRow } from './backtestStats'
@@ -29,6 +33,23 @@ export interface TrackRecord extends IndustryRow {
 const EXCESS_THRESHOLD = 3
 
 /**
+ * 這句必須跟著每一則產業實績一起出現。
+ *
+ * 2026-07-22 樣本外檢驗：用前半期（2016-2021）算出各產業的超額報酬，
+ * 看後半期（2022 起）是否延續——結果是不延續，而且方向相反：
+ *
+ *   前期被標「落後」的 16 個組合 → 後期仍落後僅 19%、反轉為領先 56%
+ *   後期超額中位數 +3.91pp（前期 -6.09pp）
+ *   前期被標「領先」者 → 後期超額中位數僅 +2.33pp，比前者還低
+ *   前後期相關性 Pearson -0.06、Spearman -0.02
+ *
+ * 也就是說這些數字只描述過去，對未來沒有預測力。資料本身是真的、
+ * 值得呈現（本站定位是模型體檢報告），但不可讓使用者讀成預警。
+ */
+const OOS_CAVEAT = '此為歷史紀錄，非預測——樣本外檢驗顯示產業間的差異不會延續'
+  + '（前後期相關性 −0.06，前期落後的產業後期反而略好）。'
+
+/**
  * 查某模型在某產業的歷史實績。
  * 找不到（樣本不足 30 筆、產業未回測、模型未回測）一律回傳 null——
  * 寧可不顯示，也不用其他產業的數字頂替。
@@ -43,20 +64,20 @@ export function getTrackRecord(model: string, industry: string | null | undefine
     : 'neutral'
 
   const dir = row.excess >= 0 ? '領先' : '落後'
-  const verdict = {
-    good: `歷史上此產業的 ${MODEL_LABEL[model]} 便宜訊號表現較佳`,
-    neutral: `歷史上此產業的 ${MODEL_LABEL[model]} 便宜訊號與同業無明顯差異`,
-    bad: `注意：歷史上此產業的 ${MODEL_LABEL[model]} 便宜訊號多為價值陷阱`,
-  }[tone] + `——過去 ${INDUSTRY_HORIZON} 個月持有期，訊號股報酬中位數 ${row.median.toFixed(1)}%，`
-    + `${dir}同業平均 ${Math.abs(row.excess).toFixed(1)} 個百分點（樣本 ${row.n.toLocaleString()} 筆）。`
+  // 純陳述歷史，不下預測性判語。原本 bad 寫「注意：多為價值陷阱」、
+  // good 寫「表現較佳」，都是把回顧當預測——樣本外檢驗證明不成立（見 OOS_CAVEAT）。
+  const verdict = `過去 ${INDUSTRY_HORIZON} 個月持有期，此產業的 ${MODEL_LABEL[model]} `
+    + `便宜訊號報酬中位數 ${row.median.toFixed(1)}%，`
+    + `${dir}同業 ${Math.abs(row.excess).toFixed(1)} 個百分點（樣本 ${row.n.toLocaleString()} 筆）。`
+    + OOS_CAVEAT
 
   return { ...row, tone, verdict }
 }
 
 /**
  * 多模型共識列用：在該列共識的模型中，取實績最差的一個。
- * 共識代表「多個模型都說便宜」，但只要其中一個模型在這個產業是價值陷阱，
- * 使用者就該看到警告——取最差而非平均，是刻意讓警示不被好消息稀釋。
+ * 取最差而非平均，是刻意不讓落後的那一項被好數字蓋掉——
+ * 但呈現一律中性，這些數字描述過去、不預測未來（見 OOS_CAVEAT）。
  */
 export function getWorstTrackRecord(
   modelLabels: string[] | undefined,

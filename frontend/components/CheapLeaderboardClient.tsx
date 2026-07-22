@@ -280,12 +280,16 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                           帳上現金難以驗證，請留意海外資產真實性
                         </div>
                       )}
+                      {/* 中性呈現：原本是紅框「🪤 產業陷阱」，等於叫使用者別碰。
+                          2026-07-22 樣本外檢驗證明產業差異不會延續（前後期相關性 −0.06，
+                          前期落後者後期反而略好），紅色警示是資料不支持的預測性暗示。
+                          數字保留給想深究的人看，判斷不替使用者做。 */}
                       {trap?.tone === 'bad' && (
                         <span
                           title={trap.verdict}
-                          className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 font-medium leading-tight mt-0.5 cursor-help"
+                          className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-200 leading-tight mt-0.5 cursor-help"
                         >
-                          🪤 產業陷阱 {trap.excess.toFixed(1)}pp
+                          📉 同業歷史 {trap.excess.toFixed(1)}pp
                         </span>
                       )}
                     </td>
