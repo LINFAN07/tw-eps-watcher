@@ -38,6 +38,16 @@ jobs:
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
         run: python scripts/audit_cross_check.py
 
+      # 對外比對：拿交易所官方申報值驗 EPS、每股淨值、除權息還原。
+      # 上面兩支都只看「我們自己的數字彼此合不合」，來源本身錯了照樣通過；
+      # 本專案四次事故有三次正是這一類，且都是靠人工跨來源比對才發現的。
+      # 2026-07-22 首跑即抓出面額寫死造成 23% 的每股淨值錯誤（4763 目標價高估 22 倍）。
+      - name: 對外比對稽核（交易所官方申報值）
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/audit_external.py
+
       - name: 執行估值驗證（內部一致性 + 與 FinMind 跨來源比對）
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}

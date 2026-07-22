@@ -32,6 +32,7 @@ NO_SCHEDULE_OK = {
     "backfill_industry.py":           "一次性補產業別",
     "backfill_eps_from_income.py":    "由 quarterly_eps.yml 條件式呼叫",
     "backfill_last_seen.py":          "一次性回填 last_seen_date；日常維護由 daily_price_update.mark_delisted 負責",
+    "patch_par_value.py":             "一次性修正面額寫死造成的每股淨值與股數錯誤；日常由 download_balance_sheet.py 用正確面額寫入",
     # 共用模組，非可執行工作
     "finmind_client.py":              "共用模組",
     "price_adjust.py":                "共用純函式模組",
