@@ -163,7 +163,8 @@ def get_status(current_price: float, cheap: float, fair: float) -> str:
 # ─────────────── P/B 股價淨值比 ───────────────
 
 def calculate_pb(stock_id: str, price_df: pd.DataFrame, current_price: float) -> dict:
-    rows = _fetch_paged("balance_sheet_quarterly", {"stock_id": stock_id}, "quarter_end_date,book_value_per_share")
+    rows = _fetch_paged("balance_sheet_quarterly", {"stock_id": stock_id},
+                        "quarter_end_date,book_value_per_share,shares_thousand")
     if not rows:
         return {}
 
@@ -175,13 +176,24 @@ def calculate_pb(stock_id: str, price_df: pd.DataFrame, current_price: float) ->
     if len(bvps_df) < MIN_PB_QUARTERS:
         return {}
 
+    # 歷史每股淨值換算到「最新股數基準」，與已除權還原的股價配套。
+    # 每股淨值是各季用當時股數申報的，配股後股數變多、數值變小，財報不追溯調整；
+    # 股價卻已還原到最新基準，分母不跟著換算，P/B 會被系統性壓低。
+    # 實測 1436 的 P/E 因此被壓低 43%（同一個成因），詳見 calculate_valuation.share_factors。
+    # 最新一季因子必為 1，故下方的 cur_bvps 不受影響。
+    shares = pd.to_numeric(bvps_df["shares_thousand"], errors="coerce")
+    latest_shares = shares.dropna().iloc[-1] if shares.notna().any() else None
+    factor = (shares / latest_shares).fillna(1.0) if latest_shares and latest_shares > 0 \
+        else pd.Series(1.0, index=bvps_df.index)
+    bvps_df["adj_bvps"] = bvps_df["book_value_per_share"] * factor
+
     # 每季季末對應股價 → 計算歷史 P/B 序列
     pb_series = []
     for _, row in bvps_df.iterrows():
-        bvps   = float(row["book_value_per_share"])
+        bvps   = float(row["adj_bvps"])              # 已換算到最新股數基準
         q_date = row["quarter_end_date"]
         nearby = price_df[price_df["date"] <= q_date]
-        if nearby.empty:
+        if nearby.empty or bvps <= 0:
             continue
         price = float(nearby.iloc[-1]["adj_price"])   # 歷史 P/B 分布用還原價
         pb    = price / bvps

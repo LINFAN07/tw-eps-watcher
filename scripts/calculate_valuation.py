@@ -95,6 +95,54 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     return df
 
 
+def share_factors(stock_id: str) -> pd.DataFrame:
+    """
+    各季的股數調整因子 = 當季股數 ÷ 最新股數，用來把歷史每股數值
+    追溯換算到「最新股數基準」。
+
+    為什麼需要：EPS 與每股淨值都是各季用【當時股數】申報的，配股後股數變多，
+    同樣的獲利分給更多股，數值自然變小——財報並未追溯調整前期。
+    而歷史股價已用除權還原換算到最新股數基準（見 price_adjust.py），
+    若分母不跟著換算，P/E、P/B 會被系統性壓低。
+
+    2026-07-22 實測 1436：配股前真實 P/E 6.90，只還原股價卻不調 EPS 會變成 4.86，
+    使目標價憑空下修 28%。那不是揭露真相，是分子調了、分母沒調造成的新偏差。
+
+    最新一季的因子必為 1，故「當前 TTM EPS」不受影響——
+    目標價＝今天的 EPS ×（已換算基準的）歷史百分位，兩者自洽。
+
+    P/S 與 P/FCF 不需要這個調整：它們的每股值本來就是用【最新】股數算出來的。
+    """
+    rows = _fetch_paged("balance_sheet_quarterly", {"stock_id": stock_id},
+                        "quarter_end_date,shares_thousand")
+    rows = [r for r in rows if r.get("shares_thousand")]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df["quarter_end_date"] = pd.to_datetime(df["quarter_end_date"])
+    df = df.sort_values("quarter_end_date")
+    latest = float(df.iloc[-1]["shares_thousand"])
+    if latest <= 0:
+        return pd.DataFrame()
+    df["factor"] = df["shares_thousand"].astype(float) / latest
+    return df[["quarter_end_date", "factor"]].reset_index(drop=True)
+
+
+def apply_share_factors(df: pd.DataFrame, value_col: str, factors: pd.DataFrame) -> pd.Series:
+    """
+    把 df[value_col] 依各季股數因子換算到最新股數基準。
+    股本季度與財報季度未必逐一對齊（興櫃為半年報），故用 merge_asof 向前對應；
+    對應不到者維持原值（因子 1），不猜、不外插。
+    """
+    if factors.empty:
+        return df[value_col].astype(float)
+    merged = pd.merge_asof(
+        df[["quarter_end_date", value_col]].sort_values("quarter_end_date"),
+        factors, on="quarter_end_date", direction="backward",
+    )
+    return merged[value_col].astype(float) * merged["factor"].fillna(1.0).values
+
+
 def _eps_window(eps_df: pd.DataFrame) -> int:
     """興櫃半年報只有 6/30 與 12/31，用 2 期；上市/上櫃季報用 4 期"""
     months = set(eps_df["quarter_end_date"].dt.month.unique())
@@ -122,12 +170,22 @@ def to_weekly(price_df: pd.DataFrame) -> pd.DataFrame:
                     .sort_values("date").reset_index(drop=True))
 
 
-def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFrame:
-    """用 merge_asof 向量化計算每週的 P/E，取代逐行迴圈"""
+def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame,
+                    factors: pd.DataFrame | None = None) -> pd.DataFrame:
+    """
+    用 merge_asof 向量化計算每週的 P/E，取代逐行迴圈。
+
+    factors 給定時，歷史 EPS 會換算到最新股數基準——必須與「歷史股價已除權還原」
+    配套，否則分子分母基準不一致（見 share_factors）。
+    """
     price_df = to_weekly(price_df)   # 時間權重必須均勻，見 to_weekly
     w = _eps_window(eps_df)
     eps = eps_df.copy()
-    eps["ttm_eps"] = eps["eps"].rolling(w, min_periods=w).sum()
+    # 先逐季換算再滾動加總：每季 EPS 各自對應自己那一季的股數，
+    # 加總後即「近 w 季總獲利 ÷ 最新股數」，與現價的股數基準一致
+    eps["adj_eps"] = apply_share_factors(eps, "eps", factors) if factors is not None \
+        else eps["eps"].astype(float)
+    eps["ttm_eps"] = eps["adj_eps"].rolling(w, min_periods=w).sum()
     eps = eps.dropna(subset=["ttm_eps"])
 
     merged = pd.merge_asof(
@@ -200,7 +258,7 @@ def calculate_valuation(stock_id: str) -> dict | None:
     if eps_df.empty or price_df.empty:
         return None
 
-    series = build_pe_series(eps_df, price_df)
+    series = build_pe_series(eps_df, price_df, share_factors(stock_id))
     if len(series) < MIN_PE_SAMPLES:
         return None
 
