@@ -95,6 +95,35 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     return df
 
 
+def filing_date(quarter_end: pd.Timestamp) -> pd.Timestamp:
+    """
+    財報在市場上真正可得的日期＝主管機關的申報期限。
+    Q1→5/15、Q2→8/14、Q3→11/14、年報→次年 3/31；
+    半年報公司（興櫃）6/30 的期限為 8/31，取較晚者以策保守。
+
+    為什麼不能用季末日對齊：2018-04-01 不可能知道 2018Q1 的 EPS。
+    以季末日對齊等於讓歷史 P/E 序列使用「當時還沒公布的財報」，
+    那些點是算不出來的，卻被算了出來——屬於 look-ahead。
+
+    2026-07-22 實測影響（20% 分位，即便宜價基準）：
+      台積電 +0.6%、金融 +1.4%、配股大戶 +2.2%、興櫃半年報 −0.3%。
+      幅度都在 3% 內，且沒有股票因樣本變短而失去估值——
+      修這一項是為了【正確性】（消除 look-ahead），不是為了修正大偏差。
+
+    ⚠️ 實作時的陷阱：不可直接把 eps 的 quarter_end_date 換成申報日。
+    _eps_window() 靠季度月份是否為 {6,12} 判斷半年報，換日期後月份變成 {3,8}，
+    半年報會被誤判為季報、TTM 從 2 期變 4 期（等於把 2 年當 1 年），
+    序列大幅縮短、P/E 腰斬。首次評估即因此誤得「興櫃股差 −44.7%、
+    約 32 支會失去估值」的結論。正確做法是保留 quarter_end_date 供週期判斷，
+    只在對齊股價時使用申報日。
+    """
+    y, m = quarter_end.year, quarter_end.month
+    return {3:  pd.Timestamp(y, 5, 15),
+            6:  pd.Timestamp(y, 8, 31),
+            9:  pd.Timestamp(y, 11, 14),
+            12: pd.Timestamp(y + 1, 3, 31)}[m]
+
+
 def share_factors(stock_id: str) -> pd.DataFrame:
     """
     各季的股數調整因子 = 當季股數 ÷ 最新股數，用來把歷史每股數值
@@ -188,9 +217,13 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame,
     eps["ttm_eps"] = eps["adj_eps"].rolling(w, min_periods=w).sum()
     eps = eps.dropna(subset=["ttm_eps"])
 
+    # 以「財報實際可得日」而非季末日對齊股價，否則歷史 P/E 會用到當時尚未公布的
+    # 財報（look-ahead）。半年報公司受影響最大，見 filing_date。
+    eps["avail_date"] = eps["quarter_end_date"].map(filing_date)
     merged = pd.merge_asof(
         price_df.sort_values("date"),
-        eps[["quarter_end_date", "ttm_eps"]].rename(columns={"quarter_end_date": "date"}),
+        eps[["avail_date", "ttm_eps"]].rename(columns={"avail_date": "date"})
+           .sort_values("date"),
         on="date", direction="backward",
     )
     merged = merged.dropna(subset=["ttm_eps"])
