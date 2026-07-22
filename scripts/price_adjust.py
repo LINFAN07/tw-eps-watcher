@@ -42,7 +42,8 @@ import bisect
 
 
 def back_adjust(dates: list[str], closes: list[float],
-                ex_list: list[tuple[str, float, float]]) -> list[float]:
+                ex_list: list[tuple[str, float, float]],
+                official: dict[str, float] | None = None) -> list[float]:
     """
     後向還原。回傳與 dates 對齊的還原價陣列（純函式，可單元測試）。
 
@@ -50,31 +51,46 @@ def back_adjust(dates: list[str], closes: list[float],
     ex_list 為 (除權息日, 現金股利, 股票股利)——股票股利不可省略，
     只還原現金股利會在配股日留下數十個百分點的假跌幅（見模組說明）。
 
+    official 為 {除權息日: 還原因子}，來自交易所公告的「參考價 ÷ 前收盤價」。
+    有官方值就用官方值，它涵蓋現金增資與減資——自算公式涵蓋不了那兩者。
+    兩者的日期取聯集：只辦現金增資的除權息（配息配股皆為 0，如 3028 零壹
+    2026-07-17）根本不會出現在 ex_list，只存在於官方資料。
+
     只採計「除權息日 ≤ 最後交易日」且能取得前一交易日收盤價者，
     確保最新一日 factor=1（現價不被改動）。
     """
     if not dates:
         return []
     last_date = dates[-1]
+    official = official or {}
 
-    # 每個除權息日的還原因子，用前一交易日收盤價當基準
+    events = {d: (c or 0.0, s or 0.0) for d, c, s in ex_list}
     factors: list[tuple[str, float]] = []
-    for ex_date, cash, stock in ex_list:
-        cash = cash or 0.0
-        stock = stock or 0.0
-        if (cash <= 0 and stock <= 0) or ex_date > last_date:
+    for ex_date in sorted(set(events) | set(official)):
+        if ex_date > last_date:
             continue
         i = bisect.bisect_left(dates, ex_date)   # 第一個 >= ex_date 的位置
         if i == 0:
             continue                             # 除權息日早於所有股價，無基準可算
-        # 序列中除權息日前的最後一筆收盤價。注意這未必是「前一交易日」——
-        # 週採樣瘦身後三個月以前只剩週頻，實測會取到 6～7 天前的價格。
-        # 誤差 <1%（有配股時分母由配股率主導，對 prev_close 不敏感），詳見 TODO 1f。
-        prev_close = closes[i - 1]
-        # 除權息參考價 ÷ 前收：分子除息、分母除權（配股率 = 股票股利 ÷ 10）
-        f = (prev_close - cash) / (prev_close * (1 + stock / 10))
-        if f <= 0 or f > 1:
-            continue                             # 股利 ≥ 前收（資料異常），跳過該筆
+
+        f = official.get(ex_date)
+        if f is not None:
+            # 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
+            # 上限 5 純為防呆（因子再大就不可能是除權息了）。
+            if not 0 < f <= 5:
+                continue
+        else:
+            cash, stock = events[ex_date]
+            if cash <= 0 and stock <= 0:
+                continue
+            # 序列中除權息日前的最後一筆收盤價。注意這未必是「前一交易日」——
+            # 週採樣瘦身後三個月以前只剩週頻，實測會取到 6～7 天前的價格。
+            # 誤差 <1%（有配股時分母由配股率主導，對 prev_close 不敏感），詳見 TODO 1f。
+            prev_close = closes[i - 1]
+            # 除權息參考價 ÷ 前收：分子除息、分母除權（配股率 = 股票股利 ÷ 10）
+            f = (prev_close - cash) / (prev_close * (1 + stock / 10))
+            if f <= 0 or f > 1:
+                continue                         # 股利 ≥ 前收（資料異常），跳過該筆
         factors.append((ex_date, f))
 
     factors.sort()                               # 依除息日升冪

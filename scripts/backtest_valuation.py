@@ -136,6 +136,7 @@ def load_all() -> dict:
         "bvps":      _cached("bvps",      lambda: _paged("balance_sheet_quarterly",
                                                          "stock_id,quarter_end_date,book_value_per_share,shares_thousand", "stock_id")),
         "dividends": _cached("dividends", lambda: _paged("dividends", "stock_id,ex_date,cash_dividend,stock_dividend", "stock_id")),
+        "factors":   _cached("ex_factors", lambda: _paged("ex_right_factors", "stock_id,ex_date,prev_close,ref_price", "stock_id")),
     }
 
 
@@ -158,16 +159,24 @@ def available_date(quarter_end: pd.Timestamp) -> pd.Timestamp:
 # ------------------------------------------------------------ 面板組裝
 
 def adjusted_price_matrix(prices: pd.DataFrame, dividends: pd.DataFrame,
-                          dates: list[str]) -> pd.DataFrame:
+                          factors: pd.DataFrame, dates: list[str]) -> pd.DataFrame:
     """
     月末還原價矩陣（列＝月末日、欄＝股票）。
     還原用真實除息日與股利，但基準收盤價以月末價近似（見檔頭「月採樣近似」）。
+
+    有交易所公告的還原因子就優先用——自算公式涵蓋不了現金增資與減資。
+    官方因子是「公告參考價 ÷ 公告前收盤價」，不受月末近似影響，比自算更準。
     """
     # 配股必須一起帶：只還原現金股利會在配股日留下數十個百分點的假跌幅，
     # 使回測的歷史倍數偏低（見 price_adjust.py 模組說明）
     div = dividends.fillna({"cash_dividend": 0, "stock_dividend": 0})
     ex_map = {sid: list(zip(g["ex_date"], g["cash_dividend"], g["stock_dividend"]))
               for sid, g in div.groupby("stock_id")}
+
+    f = factors[pd.to_numeric(factors["prev_close"], errors="coerce") > 0].copy()
+    f["factor"] = pd.to_numeric(f["ref_price"]) / pd.to_numeric(f["prev_close"])
+    official_map = {sid: dict(zip(g["ex_date"], g["factor"]))
+                    for sid, g in f.groupby("stock_id")}
 
     wide = prices.pivot_table(index="date", columns="stock_id", values="close_price")
     wide = wide.reindex(dates)          # 對齊完整月曆，缺月留 NaN（停牌）
@@ -178,7 +187,8 @@ def adjusted_price_matrix(prices: pd.DataFrame, dividends: pd.DataFrame,
         if s.empty:
             continue
         adj[sid] = pd.Series(
-            back_adjust(s.index.tolist(), s.tolist(), ex_map.get(sid, [])), index=s.index)
+            back_adjust(s.index.tolist(), s.tolist(), ex_map.get(sid, []),
+                        official_map.get(sid)), index=s.index)
     return pd.DataFrame(adj).reindex(dates)
 
 
@@ -267,10 +277,10 @@ def forward_returns(adj: pd.DataFrame, h: int, mask: pd.DataFrame | None = None)
     return df.dropna()
 
 
-def backtest(model: str, adj: pd.DataFrame, base: pd.DataFrame,
-             lo: float, hi: float) -> pd.DataFrame:
+def cheap_mask(adj: pd.DataFrame, base: pd.DataFrame,
+               lo: float, hi: float) -> pd.DataFrame:
     """
-    回傳每一筆「便宜訊號 → 未來報酬」的長表。
+    「便宜」訊號的布林面板（列＝月末、欄＝股票）。
     base = 估值基準值面板（P/E 用 TTM EPS，P/B 用每股淨值）。
     """
     base = base.reindex(columns=adj.columns).where(base > 0)
@@ -278,8 +288,13 @@ def backtest(model: str, adj: pd.DataFrame, base: pd.DataFrame,
 
     # expanding：時點 T 的百分位只用 ≤T 的樣本，這是本回測不作弊的關鍵
     cheap_mult = mult.expanding(min_periods=MIN_SAMPLE).quantile(PCT_CHEAP)
-    is_cheap = (adj <= base * cheap_mult) & mult.notna()
+    return (adj <= base * cheap_mult) & mult.notna()
 
+
+def backtest(model: str, adj: pd.DataFrame, base: pd.DataFrame,
+             lo: float, hi: float) -> pd.DataFrame:
+    """回傳每一筆「便宜訊號 → 未來報酬」的長表"""
+    is_cheap = cheap_mask(adj, base, lo, hi)
     df = pd.concat([forward_returns(adj, h, is_cheap) for h in HORIZONS], ignore_index=True)
     df["model"] = model
     return df
@@ -356,7 +371,7 @@ def main():
     dates = data["dates"]
 
     print("組裝面板…")
-    adj = adjusted_price_matrix(data["prices"], data["dividends"], dates)
+    adj = adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
     # 分母也要換算到最新股數基準，否則與「已除權還原的股價」基準不一致
     factors = share_factor_table(data["bvps"])
     eps_ttm = fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors)

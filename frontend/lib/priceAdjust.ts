@@ -18,24 +18,40 @@ export type ExEvent = [string, number, number]
 // factor_d =（前收盤 − 現金股利）÷（前收盤 × (1 + 股票股利 ÷ 10)）
 //   分子處理除息、分母處理除權（配股率 = 股票股利 ÷ 10，面額 10 元）。
 // 錨定今日 → 最新一日還原價 == 原始價，現價不受影響。
+//
+// official 為交易所公告的還原因子（參考價 ÷ 前收盤價），有就優先用——
+// 上面那條自算公式涵蓋不了現金增資與減資。兩者的日期取聯集：
+// 只辦現金增資的除權息（配息配股皆為 0）根本不會出現在 exList。
 export function backAdjust(
   dates: string[], closes: number[], exList: ExEvent[],
+  official?: Record<string, number>,
 ): number[] {
   if (dates.length === 0) return []
   const lastDate = dates[dates.length - 1]
 
+  const events = new Map(exList.map(([d, c, s]) => [d, [c || 0, s || 0] as const]))
+  const allDates = [...new Set([...events.keys(), ...Object.keys(official ?? {})])].sort()
+
   const factors: [string, number][] = []
-  for (const [exDate, cashRaw, stockRaw] of exList) {
-    const cash = cashRaw || 0
-    const stock = stockRaw || 0
-    if ((cash <= 0 && stock <= 0) || exDate > lastDate) continue
+  for (const exDate of allDates) {
+    if (exDate > lastDate) continue
     // 第一個 >= exDate 的位置（dates 升冪，二分搜尋，等同 Python bisect_left）
     let lo = 0, hi = dates.length
     while (lo < hi) { const m = (lo + hi) >> 1; if (dates[m] < exDate) lo = m + 1; else hi = m }
     if (lo === 0) continue                    // 除權息日早於所有股價，無基準
-    const prevClose = closes[lo - 1]
-    const f = (prevClose - cash) / (prevClose * (1 + stock / 10))
-    if (f <= 0 || f > 1) continue             // 股利 ≥ 前收（資料異常），跳過
+
+    let f = official?.[exDate]
+    if (f !== undefined) {
+      // 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
+      // 上限 5 純為防呆（因子再大就不可能是除權息了）。
+      if (!(f > 0 && f <= 5)) continue
+    } else {
+      const [cash, stock] = events.get(exDate)!
+      if (cash <= 0 && stock <= 0) continue
+      const prevClose = closes[lo - 1]
+      f = (prevClose - cash) / (prevClose * (1 + stock / 10))
+      if (f <= 0 || f > 1) continue           // 股利 ≥ 前收（資料異常），跳過
+    }
     factors.push([exDate, f])
   }
   factors.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
@@ -54,8 +70,10 @@ export function backAdjust(
 export function adjustedMap(
   prices: { date: string; close_price: number }[],
   exList: ExEvent[],
+  official?: Record<string, number>,
 ): Record<string, number> {
-  const adj = backAdjust(prices.map(p => p.date), prices.map(p => Number(p.close_price)), exList)
+  const adj = backAdjust(prices.map(p => p.date), prices.map(p => Number(p.close_price)),
+                         exList, official)
   const m: Record<string, number> = {}
   prices.forEach((p, i) => { m[p.date] = adj[i] })
   return m

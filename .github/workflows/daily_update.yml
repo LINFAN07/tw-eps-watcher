@@ -41,6 +41,17 @@ jobs:
       - name: 安裝套件
         run: pip install requests supabase python-dotenv pandas
 
+      # 除權息還原因子：存交易所公告的「參考價 ÷ 前收盤價」，供還原歷史價使用。
+      # 必須每日跑——上櫃端點只有當日資料，漏一天就永久缺那天的官方因子
+      # （上市可事後用區間查詢補回，上櫃不行）。缺的日期會回退自算公式，
+      # 那條公式涵蓋不了現金增資與減資。
+      # 放在股價更新之前：先有還原因子，當日估值才是用正確的歷史倍數算的。
+      - name: 更新除權息還原因子
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/download_ex_right_factors.py
+
       - name: 執行每日股價更新
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

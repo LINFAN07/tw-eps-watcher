@@ -78,6 +78,19 @@ def fetch_dividends(stock_id: str) -> list[tuple[str, float, float]]:
             for r in rows]
 
 
+def fetch_official_factors(stock_id: str) -> dict[str, float]:
+    """
+    交易所公告的還原因子 {除權息日: 參考價 ÷ 前收盤價}。
+
+    優先於股利自算——自算公式涵蓋不了現金增資與減資（見 price_adjust.py）。
+    上櫃／興櫃只有當日資料、無歷史，那些日期查無官方值時自動回退自算。
+    """
+    rows = _fetch_paged("ex_right_factors", {"stock_id": stock_id},
+                        "ex_date,prev_close,ref_price")
+    return {r["ex_date"]: float(r["ref_price"]) / float(r["prev_close"])
+            for r in rows if float(r["prev_close"] or 0) > 0}
+
+
 def fetch_prices(stock_id: str) -> pd.DataFrame:
     rows = _fetch_paged("daily_prices", {"stock_id": stock_id}, "date,close_price")
     if not rows:
@@ -90,7 +103,8 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     # 現價仍取原始 close_price（見 calculate_valuation 的 current_price）。
     df["adj_price"] = back_adjust(df["date"].astype(str).tolist(),
                                   df["close_price"].tolist(),
-                                  fetch_dividends(stock_id))
+                                  fetch_dividends(stock_id),
+                                  fetch_official_factors(stock_id))
     df["date"] = pd.to_datetime(df["date"])
     return df
 

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
-import { adjustedMap, type ExEvent } from '@/lib/priceAdjust'
+import { adjustedMap } from '@/lib/priceAdjust'
+import { fetchExAdjustment } from '@/lib/exRights'
 
 // 取得一支股票的所有日收盤價（自動分頁，繞過 Supabase 1000 筆上限）
 // 中途任一頁失敗即拋出錯誤，避免靜默回傳截斷的不完整資料
@@ -55,12 +56,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     return NextResponse.json({ error: '價格資料載入失敗' }, { status: 500 })
   }
   // 除權息即時還原：用全日序列（升冪）+ 股利算「日期→還原價」，再月採樣
-  const { data: divRows } = await db.from('dividends')
-    .select('ex_date,cash_dividend,stock_dividend').eq('stock_id', code)
-  // 配股必須一起帶：只還原現金股利會在配股日留下數十個百分點的假跌幅
-  const exList: ExEvent[] = (divRows ?? []).map(d =>
-    [d.ex_date, Number(d.cash_dividend ?? 0), Number(d.stock_dividend ?? 0)])
-  const adjMap = adjustedMap(prices, exList)
+  const { exList, official } = await fetchExAdjustment(db, code)
+  const adjMap = adjustedMap(prices, exList, official)
 
   const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
