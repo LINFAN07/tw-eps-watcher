@@ -88,6 +88,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
   const fields = [
     'stock_id', 'current_price',
     'status', 'cheap_price', 'pe_reliable', 'warning', 'nonop_warning',
+    ...RATIO_COLS.pe!, ...RATIO_COLS.pb!,   // 估值帶寬：共識榜的成員本就含 P/E、P/B 便宜票
     'pb_status', 'pb_cheap_price', 'pb_reliable',
     'ps_status', 'ps_cheap_price',
     'pfcf_status', 'pfcf_cheap_price',
@@ -146,10 +147,23 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
       : r.ps_status === '便宜' && r.ps_cheap_price   != null    ? Number(r.ps_cheap_price)
       : Number(r.pfcf_cheap_price)
 
+    // 估值帶寬取「投了便宜票的模型中最發散的那個」——與 getWorstTrackRecord
+    // 同一原則：只要其中一個模型的帶散得到處都是，使用者就該看到警示，
+    // 不能被另一個模型的好數字稀釋。P/S、P/FCF 的帶寬未經驗證，不納入。
+    const levels = [
+      peValid ? getBandStability(r.cheap_pe as number, r.fair_pe as number,
+                                 r.expensive_pe as number, 'pe')?.level : null,
+      pbValid ? getBandStability(r.pb_cheap_pb as number, r.pb_fair_pb as number,
+                                 r.pb_expensive_pb as number, 'pb')?.level : null,
+    ].filter(Boolean)
+
     rows.push({
       stock_id:         r.stock_id as string,
       current_price:    Number(r.current_price),
       cheap_price:      cheapPrice,
+      band_level:       levels.includes('diffuse') ? 'diffuse'
+        : levels.includes('normal') ? 'normal'
+        : levels[0] ?? null,
       warning,
       ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
       pb_book_value:    r.pb_book_value != null ? Number(r.pb_book_value) : null,

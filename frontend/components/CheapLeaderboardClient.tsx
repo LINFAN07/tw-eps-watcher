@@ -161,8 +161,10 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
         <QualityToggle active={filterRoe}    onClick={() => setFilterRoe(v => !v)}    label="ROE ≥ 15%" />
         <QualityToggle active={filterMargin} onClick={() => setFilterMargin(v => !v)} label="利益率 ≥ 10%" />
         <QualityToggle active={excludeKY}    onClick={() => setExcludeKY(v => !v)}    label="排除 KY 股" title={KY_TOOLTIP} />
-        {/* 帶寬只在 P/E 與 P/B 驗證過，其餘分頁沒有資料可篩，不顯示開關 */}
-        {(model === 'pe' || model === 'pb') && (
+        {/* 帶寬只在 P/E 與 P/B 驗證過。共識榜的成員本就含 P/E、P/B 便宜票，
+            同樣算得出帶寬（取投票模型中最發散者），故一併提供開關；
+            P/S、P/FCF 榜確實沒有資料可篩，維持不顯示。 */}
+        {(model === 'pe' || model === 'pb' || model === 'consensus') && (
           <QualityToggle
             active={excludeDiffuse}
             onClick={() => setExcludeDiffuse(v => !v)}
