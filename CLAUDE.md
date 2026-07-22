@@ -91,6 +91,7 @@ tw-eps-watcher/
 | `balance_sheet_quarterly` | 每股淨值（P/B 用） | `(stock_id, quarter_end_date)` |
 | `monthly_revenue` | 月營收（單位：**元**，P/S 用） | `(stock_id, year_month)` |
 | `cash_flows_quarterly` | 營業現金流 + 資本支出（P/FCF 用） | `(stock_id, quarter_end_date)` |
+| `ex_right_factors` | 交易所公告的除權息前收盤價與參考價（還原用） | `(stock_id, ex_date)` |
 
 ### valuations 欄位分組
 
@@ -112,6 +113,7 @@ tw-eps-watcher/
 | `download_balance_sheet.py` | FinMind `TaiwanStockBalanceSheet` | balance_sheet_quarterly |
 | `download_monthly_revenue.py` | FinMind `TaiwanStockMonthRevenue` + `TaiwanStockInfo` | monthly_revenue + stocks.listed_shares |
 | `download_cash_flows.py` | FinMind `TaiwanStockCashFlowsStatement` | cash_flows_quarterly |
+| `download_ex_right_factors.py` | TWSE `TWT49U`／TPEx `tpex_exright_daily` | ex_right_factors |
 
 所有下載腳本支援 `--skip-file <file>` 斷點續傳，以及 `--discover` 模式（印出 FinMind 欄位名稱後退出）。
 
@@ -212,7 +214,7 @@ P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替�
 
 | Workflow | 時機 | 內容 | 耗時 |
 |----------|------|------|------|
-| `daily_update.yml` | 交易日 14:30 | 股價 + 各模型狀態 | ~1 分 |
+| `daily_update.yml` | 交易日 14:30 | 除權息還原因子 + 股價 + 各模型狀態 | ~1 分 |
 | `monthly_fundamentals.yml` | 每月 11 日 | 月營收（OpenAPI）+ 重算 | ~2 小時 |
 | `quarterly_eps.yml` | 財報季每週一 | EPS（FinMind）+ 重算 P/E | 遞減，首次 ~4.2 小時 |
 | `quarterly_fundamentals.yml` | 財報季 2 次 | 淨值（OpenAPI）+ 現金流（FinMind）+ 重算 | ~6.5 小時 |
@@ -229,6 +231,7 @@ P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替�
 | 資料 | 來源 | 端點 |
 |------|------|------|
 | 股價 | TWSE/TPEx OpenAPI | 3 次呼叫（上市／上櫃／興櫃） |
+| 除權息還原因子 | TWSE `TWT49U`／TPEx `tpex_exright_daily` | 上市支援 10 年區間查詢；**上櫃只有當日，漏跑就永久補不回** |
 | 月營收 | TWSE/TPEx OpenAPI | `t187ap05_L`／`mopsfin_t187ap05_O`／`t187ap05_R` |
 | 每股淨值、負債比 | TWSE/TPEx OpenAPI | `t187ap07_*`（依市場 × 行業別，約 16 個端點） |
 | EPS | FinMind | 損益表 OpenAPI 疑為累計揭露，未驗證前不改用 |
