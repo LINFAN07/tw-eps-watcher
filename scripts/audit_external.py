@@ -19,6 +19,9 @@
   A. 每股盈餘 —— 綜合損益表 t187ap06_*，對 eps_quarterly
      同時證明 EPS 是單季值：若哪天來源改成年度累計，Q2 之後會整批對不上。
   B. 每股淨值 —— 資產負債表 t187ap07_*，對 balance_sheet_quarterly
+  D. 半年報公司的 TTM 期數 —— 驗 ttm_eps 不是「最近 4 期加總」（那是兩年）。
+     A 段只證明每一季的值對，證明不了加總方式對：2026-07-22 事故時
+     A 段 1,970 筆只有 1 筆不符，22 檔半年報公司的 TTM 卻全是兩年獲利。
   C. 除權息還原 —— 除權除息計算結果表 TWT49U，驗「我們的股利資料 ＋ 還原公式」
      能否重現交易所公告的除權息參考價。
 
@@ -250,6 +253,60 @@ def check_bvps() -> list[str]:
     return bad
 
 
+def check_ttm_window() -> list[str]:
+    """
+    半年報公司的 ttm_eps 不得等於「最近 4 期加總」——那是兩年的獲利。
+
+    為什麼要獨立一段：A 段拿交易所的單季申報值逐筆比對，只證明「每一季的
+    EPS 都對」，證明不了「把它們加起來的方式對」。2026-07-22 事故正是如此——
+    A 段 1,970 筆只有 1 筆不符，看起來很健康，但 22 檔半年報公司的 ttm_eps
+    全是兩年加總（4546 長亨 12.98，正確為 7.58），A 段完全沒有反應。
+
+    判定方式不依賴期別月份的判斷邏輯（那正是出錯的地方），改為直接驗算：
+    若 ttm_eps 明顯接近 4 期加總、而與 2 期加總相差甚遠，就是誤用了 4 期。
+    """
+    print("\n=== D. 半年報公司的 TTM 期數 ===")
+    eps = {}
+    offset = 0
+    while True:
+        rows = (supabase.table("eps_quarterly").select("stock_id,quarter_end_date,eps")
+                .order("stock_id").order("quarter_end_date")
+                .range(offset, offset + 999).execute().data)
+        for r in rows:
+            if r["eps"] is not None:
+                eps.setdefault(r["stock_id"], []).append((r["quarter_end_date"], float(r["eps"])))
+        if len(rows) < 1000:
+            break
+        offset += 1000
+
+    vals = {}
+    offset = 0
+    while True:
+        rows = (supabase.table("valuations").select("stock_id,ttm_eps")
+                .order("stock_id").range(offset, offset + 999).execute().data)
+        vals.update({r["stock_id"]: r["ttm_eps"] for r in rows if r["ttm_eps"] is not None})
+        if len(rows) < 1000:
+            break
+        offset += 1000
+
+    bad, checked = [], 0
+    for sid, recs in eps.items():
+        ttm = vals.get(sid)
+        if ttm is None or len(recs) < 4:
+            continue
+        recent = sorted(recs, reverse=True)[:8]
+        if {int(d[5:7]) for d, _ in recent[:6]} > {6, 12}:
+            continue                                  # 季報公司，本段不適用
+        checked += 1
+        four = sum(e for _, e in recent[:4])
+        two = sum(e for _, e in recent[:2])
+        if abs(float(ttm) - four) < 0.01 and abs(four - two) > 0.01:
+            bad.append(f"{sid}：ttm_eps={ttm} 等於最近 4 期加總（兩年），"
+                       f"應為 2 期加總 {two:.2f}")
+    print(f"  半年報公司 {checked} 檔，TTM 誤用 4 期 {len(bad)} 檔")
+    return bad
+
+
 def check_ex_rights(days: int) -> list[str]:
     """
     驗「我們的股利資料 ＋ 還原公式」能否重現交易所公告的除權息參考價。
@@ -303,7 +360,8 @@ def main():
     args = ap.parse_args()
 
     print("對外比對稽核：以交易所官方申報值驗證資料庫")
-    problems = check_eps() + check_bvps() + check_ex_rights(args.ex_days)
+    problems = (check_eps() + check_bvps()
+                + check_ttm_window() + check_ex_rights(args.ex_days))
 
     print("\n" + "=" * 60)
     if not problems:

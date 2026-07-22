@@ -334,10 +334,15 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     # FCF = 營業現金流 + 資本支出（capex 為負值，加法等於扣除）
     cf_df["fcf"] = cf_df["operating_cf"] + cf_df["capex"]
 
+    # 半年報公司（興櫃）只有 6/12 月，固定取 4 期會把兩年當成 TTM。
+    # 只看最近 8 期：早年頻率不同或單筆異常，不該讓整支股票被誤判
+    # （同 calculate_valuation._eps_window，2026-07-22 長亨事故的同型缺陷）。
+    w = 2 if {int(d[5:7]) for d in cf_df["quarter_end_date"].tail(8)} <= {6, 12} else 4
+
     pfcf_series = []
 
-    for i in range(3, len(cf_df)):
-        ttm_fcf = float(cf_df.iloc[i - 3: i + 1]["fcf"].sum())
+    for i in range(w - 1, len(cf_df)):
+        ttm_fcf = float(cf_df.iloc[i - w + 1: i + 1]["fcf"].sum())
         # 現金流量表單位為元；listed_shares 單位為千股
         # 元 ÷ (千股 × 1000) = 元/股
         fcf_ps  = ttm_fcf / (listed_shares * 1000)
@@ -357,7 +362,7 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     # 基準值必須取「最新一季」的 TTM FCF，不能沿用迴圈中最後一個為正的舊季度，
     # 否則近期 FCF 轉負的公司會用過期現金流算出目標價。
     # 最新 TTM FCF 為負代表 P/FCF 模型不適用，直接不給估值。
-    latest_fcf_ps = float(cf_df.iloc[-4:]["fcf"].sum()) / (listed_shares * 1000)
+    latest_fcf_ps = float(cf_df.iloc[-w:]["fcf"].sum()) / (listed_shares * 1000)
 
     if len(pfcf_series) < MIN_PFCF_QTRS or latest_fcf_ps <= 0:
         return {}

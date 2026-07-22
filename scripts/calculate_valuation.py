@@ -187,9 +187,22 @@ def apply_share_factors(df: pd.DataFrame, value_col: str, factors: pd.DataFrame)
 
 
 def _eps_window(eps_df: pd.DataFrame) -> int:
-    """興櫃半年報只有 6/30 與 12/31，用 2 期；上市/上櫃季報用 4 期"""
-    months = set(eps_df["quarter_end_date"].dt.month.unique())
-    return 2 if months.issubset({6, 12}) else 4
+    """
+    興櫃半年報只有 6/30 與 12/31，用 2 期；上市/上櫃季報用 4 期。
+
+    只看最近 8 期，不看全部歷史——早年揭露頻率不同或單筆資料異常，
+    會讓整支股票被誤判成季報，TTM 變成「最近 4 個半年」＝兩年獲利。
+
+    2026-07-22 事故：4546 長亨的 EPS 全是 6/12 月，只有一筆 2020-03-31 例外，
+    整支股票因此被判季報，ttm_eps 算成 12.98（正確 7.58，高估 71%），
+    目標價連帶虛高、被判「便宜」進了排行榜。全市場 22 檔同症狀，
+    最嚴重者高估 350%（6650 帝圖 5.28 vs 正確 1.33）。
+
+    已知限制：若某公司真的在期間中途改變揭露頻率，歷史序列前段的 TTM
+    會用錯期數。半年報公司幾乎都是興櫃小型股、鮮少改頻率，故不為此增加複雜度。
+    """
+    recent = eps_df.nlargest(8, "quarter_end_date")
+    return 2 if set(recent["quarter_end_date"].dt.month) <= {6, 12} else 4
 
 
 def to_weekly(price_df: pd.DataFrame) -> pd.DataFrame:
