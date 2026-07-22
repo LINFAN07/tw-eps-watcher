@@ -288,7 +288,9 @@ def update_valuations(prices: dict[str, tuple[str, float]]):
             continue
 
         # 現價一律更新（含虧損股），各模型狀態依其目標價各自判定
-        update = {"stock_id": sid, "current_price": round(price, 2), "updated_at": now}
+        # price_date 存來源自己回報的資料日期，不用系統日期
+        update = {"stock_id": sid, "current_price": round(price, 2),
+                  "price_date": src_date, "updated_at": now}
         for model, cheap_col, fair_col, status_col in STATUS_MODELS:
             new_status = judge_status(price, row.get(cheap_col), row.get(fair_col))
             update[status_col] = new_status

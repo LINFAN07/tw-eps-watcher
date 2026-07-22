@@ -412,3 +412,13 @@ ALTER TABLE valuations
     OR pb_cheap_price <= current_price * 2
   ) STORED;
 
+-- ---------------------------------------------------------------------------
+-- valuations.price_date：current_price 的「來源日期」
+-- ---------------------------------------------------------------------------
+-- 原本只有 updated_at（腳本執行時間），要回答「這個現價是哪一天的收盤價？」
+-- 只能拿執行時間去推——但交易所資料可能是 T-1、可能因休市停留在前一交易日，
+-- 執行時間不等於資料日期（見 CLAUDE.md 資料誠信原則第 1 條）。
+-- 這個欄位直接存 daily_prices 那一列的 date，不做任何推算。
+
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS price_date DATE;

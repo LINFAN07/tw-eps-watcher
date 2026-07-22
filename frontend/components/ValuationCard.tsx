@@ -27,6 +27,7 @@ interface Valuation {
   nonop_warning?: string | null
   capital_change_warning?: string | null
   updated_at: string
+  price_date?: string | null
   pb_book_value?: number | null
   pb_cheap_pb?: number | null
   pb_fair_pb?: number | null
@@ -109,10 +110,12 @@ const BAND_STYLE: Record<BandLevel, { icon: string; cls: string }> = {
   diffuse: { icon: '🌫️', cls: 'text-amber-800 bg-amber-50 border-amber-200' },
 }
 
-// 回測實績的呈現強度：價值陷阱要看得見，表現好的不必喧賓奪主
+// 回測實績一律中性呈現。原本 bad 用紅框加 🪤，等於在說「別碰」——
+// 而 2026-07-22 的樣本外檢驗證明產業差異不會延續（見 lib/backtest.ts 的 OOS_CAVEAT），
+// 紅色警示是資料不支持的預測性暗示。數字照給，判斷留給使用者。
 const TONE_STYLE: Record<Tone, { icon: string; box: string }> = {
-  bad:     { icon: '🪤', box: 'bg-red-50 border-red-200 text-red-800' },
-  good:    { icon: '📈', box: 'bg-green-50 border-green-200 text-green-800' },
+  bad:     { icon: '📉', box: 'bg-gray-50 border-gray-200 text-gray-600' },
+  good:    { icon: '📈', box: 'bg-gray-50 border-gray-200 text-gray-600' },
   neutral: { icon: '📊', box: 'bg-gray-50 border-gray-200 text-gray-600' },
 }
 
@@ -180,7 +183,6 @@ function getModelStatus(v: Valuation, m: Model): string {
 // 各項資料的實際基準日期。顯示這個而非寫入時間戳，
 // 使用者才能自行判斷資料新鮮度（排程延遲、來源落後都看得出來）。
 type AsOf = {
-  price?: string | null   // 股價：收盤日
   pe?: string | null      // P/E：EPS 最新季度
   pb?: string | null      // P/B：淨值最新季度
   ps?: string | null      // P/S：月營收最新月份
@@ -305,7 +307,10 @@ export default function ValuationCard({
         <div>
           <p className="text-sm text-gray-500 mb-1">
             現價
-            {asOf.price && <span className="text-xs text-gray-400 ml-1.5">{fmtDay(asOf.price)} 收盤</span>}
+            {/* 日期取自 valuations.price_date（current_price 那一筆的來源日），
+                不查 daily_prices 的最新日——後者只是「有資料的最新日」，
+                若估值尚未更新，兩者會不一致而把價格配上錯的日期 */}
+            {v.price_date && <span className="text-xs text-gray-400 ml-1.5">{fmtDay(v.price_date)} 收盤</span>}
           </p>
           <p className="text-4xl font-bold text-gray-900">{v.current_price ?? '—'}</p>
         </div>

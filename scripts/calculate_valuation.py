@@ -328,7 +328,9 @@ def calculate_valuation(stock_id: str) -> dict | None:
 
     ttm_eps, warning = detect_nonrecurring(eps_df)
     normalized_eps   = compute_normalized_eps(eps_df)
-    current_price    = float(price_df.iloc[-1]["close_price"])
+    # 現價與其來源日期必須取自同一列，兩者分開取容易在日後改動時失聯
+    latest_price     = price_df.iloc[-1]
+    current_price    = float(latest_price["close_price"])
 
     # 決定計算基準 EPS：
     # 優先嘗試以「5 年均值」替代谷底 TTM；
@@ -398,6 +400,7 @@ def calculate_valuation(stock_id: str) -> dict | None:
         "fair_price":      r(effective_eps * fair_pe) if has_target else None,
         "expensive_price": r(effective_eps * expensive_pe) if has_target else None,
         "current_price":   r(current_price),
+        "price_date":      latest_price["date"].strftime("%Y-%m-%d"),
         "status":          status,
         "warning":         combined_warning,
     }
