@@ -207,15 +207,23 @@ export default function ValuationCard({
   prevYearQuarters = [],
   industry,
   asOf = {},
+  fromModel,
 }: {
   v: Valuation
   ttmQuarters?: EpsQuarter[]
   prevYearQuarters?: EpsQuarter[]
   industry?: string | null
   asOf?: AsOf
+  /** 使用者從哪個模型的排行榜點進來（?model=pb）。有值時預設顯示該模型。 */
+  fromModel?: string
 }) {
   const recommended = getRecommendedModel(industry, v)
-  const [active, setActive] = useState<Model>(recommended)
+  // 從排行榜點進來時，先顯示使用者剛才在看的那個模型。
+  // 否則會發生「P/B 榜說便宜，點進去卻只看到 P/E」的矛盾——
+  // 等於系統自己否定剛才那份榜單。
+  const from = (['pe', 'pb', 'ps', 'pfcf', 'yield'] as Model[])
+    .find(m => m === fromModel && hasModel(v, m))
+  const [active, setActive] = useState<Model>(from ?? recommended)
 
   const activeStatus = getModelStatus(v, active)
   const style = statusStyle[activeStatus] ?? { bg: 'bg-gray-50 border-gray-200', text: 'text-gray-500 bg-gray-100', label: '未知' }
@@ -332,6 +340,18 @@ export default function ValuationCard({
           )
         })}
       </div>
+
+      {/* 來源模型與推薦模型不一致時，把矛盾講明白，不讓使用者自己猜。
+          排行榜篩的是「哪個模型現在說便宜」，推薦看的是「哪個角度適合這家公司」，
+          兩者本就可能不同——但畫面若不說，使用者只會覺得系統自相矛盾。 */}
+      {from && from !== recommended && (
+        <div className="mb-5 text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+          你從 <b>{MODEL_LABELS[from]}</b> 排行榜進來，已為你切到該模型。
+          本站對這家公司的建議模型是 <b>{MODEL_LABELS[recommended]}</b>——
+          排行榜挑的是「現在哪個模型說便宜」，建議模型看的是「哪個角度最適合這家公司」，
+          兩者不一定一致。兩邊的數字都在上方分頁裡，可自行對照。
+        </div>
+      )}
 
       {/* 目標三價格子 */}
       <div className="grid grid-cols-3 gap-3 mb-5">

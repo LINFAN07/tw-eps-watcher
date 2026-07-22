@@ -8,7 +8,11 @@ import YieldRiverChart from '@/components/YieldRiverChart'
 import AltRiverChart from '@/components/AltRiverChart'
 import PeerComparison, { type PeerRow } from '@/components/PeerComparison'
 
-interface Props { params: Promise<{ code: string }> }
+interface Props {
+  params: Promise<{ code: string }>
+  // Next.js 15：searchParams 與 params 同為 Promise，必須 await
+  searchParams: Promise<{ model?: string }>
+}
 
 export async function generateMetadata({ params }: Props) {
   const { code } = await params
@@ -83,8 +87,10 @@ const statusStyle: Record<string, string> = {
   '便宜': 'text-green-600', '合理': 'text-blue-600', '昂貴': 'text-red-600',
 }
 
-export default async function StockPage({ params }: Props) {
+export default async function StockPage({ params, searchParams }: Props) {
   const { code } = await params
+  // ?model=pb：使用者從 P/B 排行榜點進來，估值卡預設顯示該模型
+  const { model: fromModel } = await searchParams
   const { stock, valuation, ttmQuarters, prevYearQuarters, asOf, peers } = await fetchStock(code)
 
   if (!stock) notFound()
@@ -125,7 +131,7 @@ export default async function StockPage({ params }: Props) {
       {/* 估值卡片 */}
       {valuation ? (
         <div className="mb-8">
-          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} asOf={asOf} />
+          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} asOf={asOf} fromModel={fromModel} />
         </div>
       ) : (
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border text-gray-400 text-center">

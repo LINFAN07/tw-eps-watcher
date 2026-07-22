@@ -214,16 +214,22 @@ export default function CheapLeaderboardClient({ data }: { data: LeaderboardData
                 const trap = model === 'consensus'
                   ? getWorstTrackRecord(r.models, r.stocks?.industry)
                   : getTrackRecord(model, r.stocks?.industry)
+                // 把來源模型帶進個股頁，估值卡才會預設顯示使用者剛才在看的那個。
+                // 否則會出現「P/B 榜說便宜，點進去只看到 P/E」的矛盾。
+                // 共識榜是多模型投票，沒有單一來源可帶。
+                const href = model === 'consensus'
+                  ? `/stock/${r.stock_id}`
+                  : `/stock/${r.stock_id}?model=${model}`
                 return (
                   <tr key={r.stock_id} className="border-b border-gray-50 transition-colors hover:bg-gray-50">
                     <td className="py-3 pr-4 text-gray-400">{i + 1}</td>
                     <td className="py-3 pr-4">
-                      <Link href={`/stock/${r.stock_id}`} className="font-mono font-bold text-blue-600 hover:underline">
+                      <Link href={href} className="font-mono font-bold text-blue-600 hover:underline">
                         {r.stock_id}
                       </Link>
                     </td>
                     <td className="py-3 pr-4">
-                      <Link href={`/stock/${r.stock_id}`} className="text-gray-800 hover:text-blue-600">
+                      <Link href={href} className="text-gray-800 hover:text-blue-600">
                         {r.stocks?.name ?? '—'}
                       </Link>
                       {isKY && (
