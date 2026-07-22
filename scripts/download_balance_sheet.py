@@ -135,6 +135,7 @@ def download_stock_bvps(stock_id: str, par: float, official_shares: int | None =
     # 金融業專用（欄位分類與一般業不同）
     fin_equity_by_date:  dict[str, float] = {}
     fin_nci_by_date:     dict[str, float] = {}
+    fin_capital_by_date: dict[str, float] = {}
 
     for r in raw:
         date_str = r.get("date", "").strip()
@@ -148,16 +149,26 @@ def download_stock_bvps(stock_id: str, par: float, official_shares: int | None =
             continue
         if type_str == "EquityAttributableToOwnersOfParent":
             equity_by_date[date_str] = val
-        elif type_str == "OrdinaryShare":
-            # 普通股股本。優先於 CapitalStock（總股本，含特別股）——
-            # 拿總股本當分母等於把特別股當普通股，會稀釋每股淨值。
-            # 驗證：1101 台泥 OrdinaryShare 75,231,817,000 ÷ 面額 10 ÷ 1000
-            # ＝ 7,523,181 千股，與交易所公告的已發行普通股數分毫不差；
-            # 用 CapitalStock 則得 7,723,181 千股（多算了 20 億元特別股）。
-            capital_by_date[date_str] = val
         elif type_str == "CapitalStock":
-            # 只在沒有 OrdinaryShare 時退而求其次（多數公司兩者相同）
-            capital_by_date.setdefault(date_str, val)
+            capital_by_date[date_str] = val
+        # ⚠️ 不可改用 OrdinaryShare 當分母（2026-07-23 回退）
+        #
+        # 曾經改過：理由是 CapitalStock 含特別股，拿它當分母等於把特別股
+        # 當普通股。用 1101 台泥驗證通過——OrdinaryShare 75,231,817,000
+        # ÷ 10 ÷ 1000 ＝ 7,523,181 千股，與交易所公告的已發行普通股數分毫不差。
+        #
+        # 但那只證明了台泥。全量落地後比對前後值，943 檔的每股淨值變動 >0.5%，
+        # 其中絕大多數面額是 10 元（面額根本不是原因）：
+        #   6829 千附精密 CapitalStock 109,000,000 vs OrdinaryShare 1,000,000
+        #   7769 鴻勁     CapitalStock 1,600,000,000 vs OrdinaryShare 469,538,000
+        # 1.09 億股本的公司，普通股股本不可能只有 100 萬——FinMind 的
+        # OrdinaryShare 欄位語意不一致，對不同公司代表不同東西。
+        #
+        # 特別股造成的偏差（台泥約 2.7%）遠小於這個欄位帶來的錯誤，
+        # 故維持 CapitalStock。若日後要處理特別股，需要能明確辨識
+        # 特別股金額的來源，而不是賭某個欄位的語意。
+        #
+        # 教訓：單一案例驗證通過，只證明那個案例。
         elif type_str == "TotalAssets":
             assets_by_date[date_str] = val
         elif type_str == "Liabilities":          # FinMind 欄位名稱（非 TotalLiabilities）
@@ -165,11 +176,15 @@ def download_stock_bvps(stock_id: str, par: float, official_shares: int | None =
         # ── 金控／保險／證券期貨業採用不同會計科目分類，
         #    沒有 EquityAttributableToOwnersOfParent，
         #    需改由「總權益 − 非控制權益」推算母公司權益。
-        #    股本不必另行補位——上面的 OrdinaryShare 分支金融業同樣適用。
+        #    需改由「總權益 − 非控制權益」為母公司權益、以普通股股本為股本。
         elif type_str == "Equity":
             fin_equity_by_date[date_str] = val
         elif type_str == "NoncontrollingInterests":
             fin_nci_by_date[date_str] = val
+        elif type_str == "OrdinaryShare":
+            # 僅供金融業在缺 CapitalStock 時補位（下方 setdefault 保證不覆蓋一般業）。
+            # 這個欄位的語意不可靠（見上方回退說明），故只當最後退路。
+            fin_capital_by_date[date_str] = val
 
     # 金融業補位：一般業欄位缺漏時，以「總權益 − 非控制權益」為母公司權益。
     # setdefault 確保一般業既有值不被覆蓋。
@@ -177,6 +192,9 @@ def download_stock_bvps(stock_id: str, par: float, official_shares: int | None =
         parent_equity = fin_equity - fin_nci_by_date.get(date_str, 0.0)
         if parent_equity > 0:
             equity_by_date.setdefault(date_str, parent_equity)
+        fin_cap = fin_capital_by_date.get(date_str)
+        if fin_cap and fin_cap > 0:
+            capital_by_date.setdefault(date_str, fin_cap)
 
     rows = []
     for date_str, equity in equity_by_date.items():
