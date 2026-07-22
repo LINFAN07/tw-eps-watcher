@@ -46,8 +46,8 @@ export const EXCESS_THRESHOLD = 3
  * 也就是說這些數字只描述過去，對未來沒有預測力。資料本身是真的、
  * 值得呈現（本站定位是模型體檢報告），但不可讓使用者讀成預警。
  */
-export const OOS_CAVEAT = '此為歷史紀錄，非預測——樣本外檢驗顯示產業間的差異不會延續'
-  + '（前後期相關性 −0.06，前期落後的產業後期反而略好）。'
+export const OOS_CAVEAT = '這是過去的紀錄，不是預測——我們實際驗證過：一個產業以前落後，'
+  + '之後不一定繼續落後，早期落後的產業後來反而常常稍微好一些。'
 
 /**
  * 查某模型在某產業的歷史實績。
@@ -63,13 +63,12 @@ export function getTrackRecord(model: string, industry: string | null | undefine
     : row.excess <= -EXCESS_THRESHOLD ? 'bad'
     : 'neutral'
 
-  const dir = row.excess >= 0 ? '領先' : '落後'
   // 純陳述歷史，不下預測性判語。原本 bad 寫「注意：多為價值陷阱」、
   // good 寫「表現較佳」，都是把回顧當預測——樣本外檢驗證明不成立（見 OOS_CAVEAT）。
-  const verdict = `過去 ${INDUSTRY_HORIZON} 個月持有期，此產業的 ${MODEL_LABEL[model]} `
-    + `便宜訊號報酬中位數 ${row.median.toFixed(1)}%，`
-    + `${dir}同業 ${Math.abs(row.excess).toFixed(1)} 個百分點（樣本 ${row.n.toLocaleString()} 筆）。`
-    + OOS_CAVEAT
+  const verdict = `這個產業裡被判「便宜」的 ${MODEL_LABEL[model]} 股，`
+    + `過去買進後抱滿 ${INDUSTRY_HORIZON} 個月，報酬中位數 ${row.median.toFixed(1)}%，`
+    + `比整個產業的平均水準${row.excess >= 0 ? '高' : '低'} ${Math.abs(row.excess).toFixed(1)} 個百分點`
+    + `（${row.n.toLocaleString()} 筆歷史紀錄）。` + OOS_CAVEAT
 
   return { ...row, tone, verdict }
 }

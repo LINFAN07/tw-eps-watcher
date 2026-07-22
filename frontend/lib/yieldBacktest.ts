@@ -41,10 +41,10 @@ export function getYieldTrackRecord(industry: string | null | undefined): YieldT
     : 'neutral'
 
   // 一律中性陳述，不下「別碰」這類預測性判語（理由見 backtest.ts 的 OOS_CAVEAT）
-  const verdict = `過去 ${YIELD_HORIZON} 個月持有期，此產業的「便宜×高殖利率」訊號`
-    + `報酬中位數 ${row.median.toFixed(1)}%，`
-    + `${row.excess >= 0 ? '領先' : '落後'}同業 ${Math.abs(row.excess).toFixed(1)} 個百分點`
-    + `（樣本 ${row.n.toLocaleString()} 筆）。` + OOS_CAVEAT
+  const verdict = `這個產業裡「便宜又高殖利率」的股票，`
+    + `過去買進後抱滿 ${YIELD_HORIZON} 個月，報酬中位數 ${row.median.toFixed(1)}%，`
+    + `比整個產業的平均水準${row.excess >= 0 ? '高' : '低'} ${Math.abs(row.excess).toFixed(1)} 個百分點`
+    + `（${row.n.toLocaleString()} 筆歷史紀錄）。` + OOS_CAVEAT
 
   return { ...row, tone, verdict }
 }
