@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { OVERALL, BY_INDUSTRY, BACKTEST_PERIOD, INDUSTRY_HORIZON, type IndustryRow } from '@/lib/backtestStats'
 import { YIELD_OVERALL } from '@/lib/backtestYieldStats'
 import { CAVEATS } from '@/lib/backtest'
+import { isQualityInSync, getQ4, getQ5 } from '@/lib/qualityBacktest'
 
 export const metadata = {
   title: '模型體檢報告 — 台股估值查詢',
@@ -69,6 +70,11 @@ export default function BacktestPage() {
   ]
   const q6max = Math.max(...q6.map(r => r.value))
   const yieldCombo24 = yov('P/E 便宜 × 高殖利率', 24)
+
+  // Q4/Q5：品質濾網與徽章。兩份 lib 失同步時（isQualityInSync=false）整段隱藏，不給過時數字
+  const q4 = getQ4()
+  const q5 = getQ5()
+  const showQuality = isQualityInSync() && q4 !== null && q5 !== null
 
   return (
     <main className="max-w-3xl mx-auto px-4 py-8 md:py-12">
@@ -193,6 +199,68 @@ export default function BacktestPage() {
         <IndustryDetail />
       </Q>
 
+      {/* Q4 + Q5：品質濾網與徽章。兩份 lib 失同步時整段不渲染（見 showQuality） */}
+      {showQuality && q4 && q5 && (() => {
+        const q4bars = [
+          { label: '不加濾網', value: q4.baseline.median, tone: 'good' as const },
+          { label: '只留 ROE≥15%', value: q4.roeKept.median, tone: 'warn' as const },
+          { label: '只留 利益率≥10%', value: q4.marginKept.median, tone: 'warn' as const },
+          { label: '被濾網丟掉的', value: q4.roeDropped.median, tone: 'good' as const },
+        ]
+        const q4max = Math.max(...q4bars.map(b => b.value))
+        const badges = [q5.topQuality, q5.potential, q5.neither]
+        const riskMax = Math.max(...badges.map(b => b.loss30))
+        return (
+          <>
+            <Q n={4} title="加上「只挑好公司」的濾網，會更賺嗎？"
+              lead="直覺會想：買便宜的、又必須是高獲利好公司，不是更穩嗎？資料給了很反直覺的答案。">
+              <Chart caption="便宜股 · 持有一年中位報酬（加濾網 vs 不加）">
+                {q4bars.map(b => <HBar key={b.label} label={b.label} value={b.value} max={q4max} tone={b.tone} />)}
+              </Chart>
+              <Note tone="bad">
+                <strong>加了濾網，報酬不升反降、還更容易大賠。</strong>只留 ROE≥15% 或利益率≥10%，中位報酬從
+                {' '}{pct(q4.baseline.median)} 掉到 {pct(q4.roeKept.median)}／{pct(q4.marginKept.median)}；
+                賠逾 30% 的比例反而從 {q5.all.loss30}% 升到 {q4.roeKept.loss30}%／{q4.marginKept.loss30}%。
+                原因跟 Q3 一樣：便宜股裡帳面最漂亮的，很多正是<em>景氣循環到頂</em>的公司——看起來最優質、其實最危險。
+              </Note>
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 mt-3">
+                ➜ 因此這兩個「品質濾網」在排行榜已<strong>預設關閉</strong>，不再自動幫你砍掉這些股票。
+              </div>
+            </Q>
+
+            <Q n={5} title="排行榜上的「徽章」該怎麼看？"
+              lead="Q4 的發現直接改變了兩種徽章的意義。先看一張風險對比圖，一眼看懂三種股票的大賠機率。">
+              <Chart caption="三種徽章的下檔風險：紅條越長越危險（持有一年 · 賠逾 30% 的比例）">
+                <RiskBar label="🏷️ 高ROE·高利益率" value={q5.topQuality.loss30} max={riskMax} worst />
+                <RiskBar label="🔍 潛力黑馬" value={q5.potential.loss30} max={riskMax} />
+                <RiskBar label="兩者皆非" value={q5.neither.loss30} max={riskMax} />
+              </Chart>
+              <div className="grid gap-3 md:grid-cols-2 mb-4">
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                  <h3 className="font-semibold text-red-900 text-sm mb-1">🏷️ 「高 ROE·高利益率」= 提醒，不是誇獎</h3>
+                  <p className="text-xs text-red-900/90 leading-relaxed">
+                    同時符合兩條件的便宜股是表現最差的一群：中位僅 {pct(q5.topQuality.median)}、
+                    大賠率最高（{q5.topQuality.loss30}%）。已改成中性標記、不再置頂。
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
+                  <h3 className="font-semibold text-green-900 text-sm mb-1">🔍 「潛力黑馬」= 目前相對最安穩</h3>
+                  <p className="text-xs text-green-900/90 leading-relaxed">
+                    利益率穩定、ROE 未到最高。報酬跟便宜全體相當（{pct(q5.potential.median)}），
+                    但大賠率最低（{q5.potential.loss30}%）、贏 0050 比例最高（{q5.potential.winRate}%）。
+                  </p>
+                </div>
+              </div>
+              <QualityBadgeTable rows={[
+                { ...q5.topQuality, label: '🏷️ 高 ROE·高利益率' },
+                { ...q5.potential, label: '🔍 潛力黑馬' },
+                { ...q5.neither, label: '兩者皆非' },
+              ]} />
+            </Q>
+          </>
+        )
+      })()}
+
       {/* Q6 */}
       <Q n={6} title="有沒有更強的組合？便宜 ＋ 高股息" hideRule
         lead="把「便宜」和「高股息（高殖利率）」疊在一起，是目前所有測試裡最亮眼的組合。">
@@ -294,12 +362,12 @@ function Chart({ caption, legend, children }: {
   )
 }
 
-/** 水平長條：綠＝正、灰＝對照。value 為報酬%（正值） */
+/** 水平長條：綠＝正、灰＝對照、琥珀＝被濾網保留（拖累）。value 為報酬%（正值） */
 function HBar({ label, value, max, tone }: {
-  label: string; value: number; max: number; tone: 'good' | 'mut'
+  label: string; value: number; max: number; tone: 'good' | 'mut' | 'warn'
 }) {
   const w = Math.max((value / max) * 100, 2)
-  const fill = tone === 'good' ? 'bg-green-500' : 'bg-gray-300'
+  const fill = tone === 'good' ? 'bg-green-500' : tone === 'warn' ? 'bg-amber-400' : 'bg-gray-300'
   return (
     <div className="grid grid-cols-[6.5rem_1fr_3.2rem] items-center gap-3">
       <span className="text-xs text-gray-600 truncate">{label}</span>
@@ -324,6 +392,24 @@ function WinBar({ label, value, highlight }: { label: string; value: number; hig
         <div className={`h-full rounded ${highlight || over ? 'bg-blue-500' : 'bg-gray-300'}`} style={{ width: `${w}%` }} />
       </div>
       <span className={`text-xs font-semibold text-right tabular-nums ${over ? 'text-blue-600' : 'text-gray-500'}`}>
+        {value.toFixed(1)}%
+      </span>
+    </div>
+  )
+}
+
+/** 風險長條：越長越危險（賠逾 30% 的比例），一律紅色，最危險者加深 */
+function RiskBar({ label, value, max, worst }: {
+  label: string; value: number; max: number; worst?: boolean
+}) {
+  const w = Math.max((value / max) * 100, 3)
+  return (
+    <div className="grid grid-cols-[9rem_1fr_2.6rem] items-center gap-3">
+      <span className="text-xs text-gray-600 truncate">{label}</span>
+      <div className="h-5 rounded bg-gray-100 overflow-hidden">
+        <div className={`h-full rounded ${worst ? 'bg-red-500' : 'bg-red-300'}`} style={{ width: `${w}%` }} />
+      </div>
+      <span className={`text-xs font-semibold text-right tabular-nums ${worst ? 'text-red-600' : 'text-gray-500'}`}>
         {value.toFixed(1)}%
       </span>
     </div>
@@ -384,6 +470,38 @@ function OverallTable() {
               </tr>
             )
           })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Q5 徽章三組的報酬 × 風險對照表 */
+function QualityBadgeTable({ rows }: {
+  rows: { label: string; median: number; winRate: number; loss30: number; loss50: number }[]
+}) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 md:p-5 overflow-x-auto">
+      <table className="w-full text-sm min-w-[30rem]">
+        <thead>
+          <tr className="border-b border-gray-200 text-gray-500 text-left">
+            <th className="pb-3 pr-4 font-medium">徽章分組（便宜股 · 1 年）</th>
+            <th className="pb-3 pr-4 font-medium text-right">中位報酬</th>
+            <th className="pb-3 pr-4 font-medium text-right">贏 0050</th>
+            <th className="pb-3 pr-4 font-medium text-right">賠逾 30%</th>
+            <th className="pb-3 font-medium text-right">腰斬</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.label} className="border-b border-gray-50">
+              <td className="py-2.5 pr-4 text-gray-800">{r.label}</td>
+              <td className="py-2.5 pr-4 text-right font-medium text-gray-800 tabular-nums">{pct(r.median)}</td>
+              <td className="py-2.5 pr-4 text-right text-gray-500 tabular-nums">{r.winRate}%</td>
+              <td className={`py-2.5 pr-4 text-right font-medium tabular-nums ${r.loss30 >= 8 ? 'text-red-500' : 'text-gray-500'}`}>{r.loss30}%</td>
+              <td className={`py-2.5 text-right tabular-nums ${r.loss50 >= 1.5 ? 'text-red-500' : 'text-gray-500'}`}>{r.loss50}%</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
