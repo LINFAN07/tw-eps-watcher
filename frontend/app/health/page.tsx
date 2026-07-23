@@ -24,7 +24,9 @@ const FRESHNESS = [
   { table: 'balance_sheet_quarterly', col: 'quarter_end_date', label: '每股淨值', unit: 'quarter' },
   { table: 'monthly_revenue',         col: 'year_month',       label: '月營收',   unit: 'month' },
   { table: 'cash_flows_quarterly',    col: 'quarter_end_date', label: '現金流',   unit: 'quarter' },
-  { table: 'dividends',               col: 'ex_date',          label: '現金股利', unit: 'day' },
+  // 股利是事件型資料（多數公司年配、台積電季配），不是每日更新——
+  // 用日曆頻率的門檻會在兩次除息之間長期誤亮紅燈。以 event 單位放寬到約一年。
+  { table: 'dividends',               col: 'ex_date',          label: '現金股利', unit: 'event' },
 ] as const
 
 async function fetchFreshness() {
@@ -78,7 +80,8 @@ function staleness(value: string | null, unit: string): 'ok' | 'warn' | 'bad' {
   const iso = unit === 'month' && value.length === 6
     ? `${value.slice(0, 4)}-${value.slice(4)}-01` : value
   const days = (Date.now() - new Date(iso).getTime()) / 86_400_000
-  const limit = { day: 5, month: 70, quarter: 200 }[unit] ?? 30
+  // event：一年最多發生幾次的事件型資料（股利），放寬到約一年才算落後
+  const limit = { day: 5, month: 70, quarter: 200, event: 400 }[unit] ?? 30
   return days <= limit ? 'ok' : days <= limit * 1.5 ? 'warn' : 'bad'
 }
 
