@@ -215,6 +215,26 @@ CREATE OR REPLACE FUNCTION db_size_mb()
   AS $$ SELECT pg_database_size(current_database()) / 1048576.0 $$;
 
 -- ─────────────────────────────────────────────────────────
+-- daily_prices 膨脹狀態（活列／死列／表大小）（2026-07-24）
+--
+-- 動機：db_size_mb() 只給「整庫多大」，答不出「快滿了是死列卡住還是真的在長大」。
+-- 死列佔比低＝空間已回收、VACUUM 幫不上忙、容量續增只能縮短保留每日的月數；
+-- 死列佔比高＝該跑一次 VACUUM (ANALYZE) daily_prices; 就能把空間變回可重用。
+-- check_data_freshness.py 每日以 rpc 呼叫，純診斷、不觸發失敗。
+-- pg_stat_user_tables 一般角色讀不到，故 SECURITY DEFINER。
+-- ─────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION daily_prices_stats()
+  RETURNS TABLE(live_tup bigint, dead_tup bigint, total_mb double precision)
+  LANGUAGE sql SECURITY DEFINER
+  AS $$
+    SELECT n_live_tup, n_dead_tup,
+           pg_total_relation_size('daily_prices') / 1048576.0
+    FROM pg_stat_user_tables
+    WHERE relname = 'daily_prices'
+  $$;
+
+-- ─────────────────────────────────────────────────────────
 -- 股本變動偵測（減資/增資/分割）（2026-07-18）
 --
 -- 動機：listed_shares 只存最新值，所有「每股」序列（EPS、淨值、營收）以最新股本

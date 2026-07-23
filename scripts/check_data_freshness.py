@@ -124,6 +124,33 @@ def check_db_size() -> list[str]:
     return []
 
 
+def report_daily_prices_bloat():
+    """
+    印出 daily_prices 的活列／死列與表大小（純診斷，不觸發失敗）。
+
+    容量接近上限時，用這組數字分辨兩種完全不同的處置：
+    - 死列佔比高 → 空間卡在死列裡，跑一次 VACUUM (ANALYZE) daily_prices; 即回收
+    - 死列佔比低 → 空間早已回收，容量仍增就是真的在長大，該縮短 KEEP_DAILY_MONTHS
+
+    需先在 Supabase 執行 schema.sql 的 daily_prices_stats()；未部署時優雅略過。
+    """
+    try:
+        resp = supabase.rpc("daily_prices_stats").execute()
+        row  = resp.data[0] if isinstance(resp.data, list) else resp.data
+        live, dead, mb = int(row["live_tup"]), int(row["dead_tup"]), float(row["total_mb"])
+    except Exception as e:
+        print(f"\ndaily_prices 膨脹狀態：略過（{e}）"
+              "\n  提示：在 Supabase 執行 schema.sql 的 daily_prices_stats() 函式即可啟用")
+        return
+
+    pct = dead / (live + dead) * 100 if (live + dead) else 0
+    print(f"\ndaily_prices：活列 {live:,}、死列 {dead:,}（{pct:.1f}%）、表大小 {mb:.0f} MB")
+    if pct >= 20:
+        print("  ⚠️  死列佔比偏高，空間卡在死列中；跑 VACUUM (ANALYZE) daily_prices; 可回收")
+    else:
+        print("  死列佔比低＝空間已回收；容量若仍持續增長，改縮短 KEEP_DAILY_MONTHS，VACUUM 幫不上忙")
+
+
 def ping_healthcheck():
     """資料新鮮時對外部死人開關報平安；未設定或失敗都不影響主結果"""
     if not HEALTHCHECK_URL:
@@ -181,6 +208,9 @@ def main():
 
     # 4. 資料庫容量（防休眠已由「本工作每日查詢 Supabase」天然達成，無需額外程式）
     problems += check_db_size()
+
+    # 4b. daily_prices 膨脹狀態：容量吃緊時分辨「該 VACUUM」還是「該縮短保留月數」
+    report_daily_prices_bloat()
 
     # 結果
     print()
