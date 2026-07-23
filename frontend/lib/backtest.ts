@@ -12,7 +12,14 @@
 
 import { BY_INDUSTRY, OVERALL, INDUSTRY_HORIZON, type IndustryRow } from './backtestStats'
 
-/** 只有 P/E 與 P/B 做過回測；P/S、P/FCF 尚未驗證，一律不顯示實績（不可拿別的模型的數字頂替） */
+/**
+ * 個股卡片／排行榜的「就地實績」目前只注入 P/E 與 P/B。
+ *
+ * P/S、P/FCF 已回測（見 /backtest 報告頁，整體表現與 P/E/P/B 相近），但這兩者的
+ * 「產業別」實績尚未做樣本外（前後期）持續性檢驗——P/E/P/B 做過、證明產業差異不會
+ * 延續（見 OOS_CAVEAT）。在對這兩個新模型補做同樣的檢驗前，先不把它們的產業數字
+ * 注入買賣決策畫面，以免被讀成選股依據。報告頁照常完整顯示四個模型（那是體檢不是推薦）。
+ */
 export type BacktestedModel = 'pe' | 'pb'
 
 const MODEL_LABEL: Record<BacktestedModel, string> = { pe: 'P/E', pb: 'P/B' }

@@ -44,6 +44,7 @@ from supabase import create_client
 
 from price_adjust import back_adjust
 from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
+from calculate_alt_valuations import decumulate  # 現金流去累計：與生產同一份實作，不另寫
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -58,6 +59,8 @@ MIN_SAMPLE = 24              # 建立百分位帶所需的最少月樣本數（2
 PCT_CHEAP  = 0.20            # 便宜 = 歷史倍數第 20 百分位
 PE_MIN, PE_MAX = 3, 200      # 與 calculate_valuation.py 一致的倍數合理範圍
 PB_MIN, PB_MAX = 0.1, 50     # 與 calculate_alt_valuations.py 一致
+PS_MIN, PS_MAX     = 0.1, 200   # 與 calculate_alt_valuations.py 一致
+PFCF_MIN, PFCF_MAX = 0.1, 200   # 同上
 
 
 # ---------------------------------------------------------------- 資料抓取
@@ -130,7 +133,7 @@ def fetch_month_end_prices(dates: list[str], stock_ids: list[str]) -> pd.DataFra
 def load_all() -> dict:
     print("讀取資料…")
     dates = month_end_dates()
-    stocks = _cached("stocks", lambda: _paged("stocks", "stock_id,name,industry,market", "stock_id"))
+    stocks = _cached("stocks", lambda: _paged("stocks", "stock_id,name,industry,market,listed_shares", "stock_id"))
     return {
         "dates":     dates,
         "prices":    fetch_month_end_prices(dates, stocks["stock_id"].tolist()),
@@ -138,6 +141,9 @@ def load_all() -> dict:
         "eps":       _cached("eps",       lambda: _paged("eps_quarterly", "stock_id,quarter_end_date,eps", "stock_id")),
         "bvps":      _cached("bvps",      lambda: _paged("balance_sheet_quarterly",
                                                          "stock_id,quarter_end_date,book_value_per_share,shares_thousand", "stock_id")),
+        "revenue":   _cached("revenue",   lambda: _paged("monthly_revenue", "stock_id,year_month,revenue", "stock_id")),
+        "cashflows": _cached("cashflows", lambda: _paged("cash_flows_quarterly",
+                                                         "stock_id,quarter_end_date,operating_cf,capex", "stock_id")),
         "dividends": _cached("dividends", lambda: _paged("dividends", "stock_id,ex_date,cash_dividend,stock_dividend", "stock_id")),
         "factors":   _cached("ex_factors", lambda: _paged("ex_right_factors", "stock_id,ex_date,prev_close,ref_price", "stock_id")),
     }
@@ -259,8 +265,83 @@ def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
     # 每個月末取最後一筆 avail ≤ 月末的值 → forward fill
     panel = (df.pivot_table(index="avail", columns="stock_id", values="value", aggfunc="last")
                .sort_index())
+    return _align_to_month_ends(panel, dates)
+
+
+def _align_to_month_ends(panel: pd.DataFrame, dates: list[str]) -> pd.DataFrame:
+    """把任意日期索引的面板 forward-fill 對齊到回測月末（列＝dates、欄不變）"""
     idx = pd.to_datetime(dates)
     return panel.reindex(panel.index.union(idx)).ffill().reindex(idx).set_axis(dates)
+
+
+def per_share(total_panel: pd.DataFrame, shares_divisor: pd.Series) -> pd.DataFrame:
+    """
+    把「總額」面板（元）換算成「每股」面板（元/股），除數為當前股數（千股×1000）。
+
+    為何用當前股數這個常數，而非逐期股數：便宜訊號＝price ≤ base×分位(price/base)，
+    分子的 base 與序列裡的 base 共用同一個常數除數，相消後訊號與除數無關；
+    它只決定倍數是否落在 [MIN, MAX] 界內。這與 calculate_alt_valuations 的 P/S、
+    P/FCF 定義一致（那裡也用 listed_shares 常數），營收與現金流是「總額」而非
+    每股申報值，故不套用 share_factor（那是給 EPS／每股淨值這類每股值用的）。
+    """
+    return total_panel.div(shares_divisor)
+
+
+def revenue_ttm_ps_matrix(revenue: pd.DataFrame, shares_divisor: pd.Series,
+                          dates: list[str]) -> pd.DataFrame:
+    """
+    月營收攤成「月末 TTM 每股營收」面板（P/S 的基準值），列＝月末、欄＝股票。
+
+    定義同 calculate_alt_valuations.calculate_ps：
+    每股營收 = 最近 12 個月營收(元) ÷ (listed_shares 千股 × 1000)。
+
+    防 look-ahead：某月營收於次月 10 日前才公告，站在月末只能用到上上月為止。
+    故 TTM(至月 M) 的可用日設為「M+1 月的月末交易日」，對齊回測抽樣點——
+    直接拿當月營收會偷看到尚未公布的數字。
+    """
+    df = revenue.copy()
+    df["revenue"] = pd.to_numeric(df["revenue"], errors="coerce")
+    df = df.dropna(subset=["revenue"])
+    df["ym"] = pd.PeriodIndex(df["year_month"].astype(str).str[:7], freq="M")
+
+    wide = df.pivot_table(index="ym", columns="stock_id", values="revenue", aggfunc="last")
+    # 補齊連續月份，缺月留 NaN（rolling min_periods=12 會自動略過期數不足處）
+    wide = wide.reindex(pd.period_range(wide.index.min(), wide.index.max(), freq="M"))
+    rps = per_share(wide.rolling(12, min_periods=12).sum(), shares_divisor)
+
+    # 可用日 = 次月的月末交易日：M→M+1 是單射，直接改寫索引即可（不必 stack 往返）。
+    # 對應不到月末交易日者（如序列尾端）→ NaT，剔除。
+    date_of_month = {pd.Period(d, freq="M"): d for d in dates}
+    rps.index = pd.to_datetime([date_of_month.get(m + 1) for m in rps.index])
+    rps = rps[rps.index.notna()]
+    return _align_to_month_ends(rps, dates)
+
+
+def fcf_ttm_ps_matrix(cashflows: pd.DataFrame, shares_divisor: pd.Series,
+                      dates: list[str]) -> pd.DataFrame:
+    """
+    現金流量表攤成「月末 TTM 每股自由現金流」面板（P/FCF 的基準值）。
+
+    定義同 calculate_alt_valuations.calculate_pfcf：
+      1. 現金流量表為年度累計，先用生產同一份 decumulate() 還原單季（缺前一季者剔除）
+      2. FCF = 營業現金流 + 資本支出（capex 為負，加法即扣除）
+      3. 經 fundamental_matrix 依申報期限做 TTM（半年報公司在步驟 1 已全被剔除，
+         實務上 w 恆為 4；行為與生產一致）
+      4. 換算每股（常數股數，理由見 per_share）
+
+    負 TTM FCF 的月份：base ≤ 0 會被 cheap_mask 的 base>0 濾除，等同「負 FCF 不納入」。
+    """
+    cf = cashflows.copy()
+    cf["quarter_end_date"] = cf["quarter_end_date"].astype(str)
+    cf["operating_cf"] = pd.to_numeric(cf["operating_cf"], errors="coerce")
+    cf["capex"]        = pd.to_numeric(cf["capex"],        errors="coerce")
+    cf = cf.dropna(subset=["operating_cf", "capex"])
+    cf = cf.groupby("stock_id", group_keys=False).apply(
+        lambda g: decumulate(g, ("operating_cf", "capex")))
+    cf["fcf"] = cf["operating_cf"] + cf["capex"]
+
+    fcf_ttm = fundamental_matrix(cf, "fcf", dates, ttm_window=4)   # TTM 總額（元）
+    return per_share(fcf_ttm, shares_divisor)
 
 
 # ------------------------------------------------------------ 回測核心
@@ -407,21 +488,30 @@ def main():
     eps_ttm = fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors)
     bvps    = fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors)
 
+    # P/S、P/FCF 的每股基準用當前股數（常數）換算，見 per_share 說明
+    shares = pd.to_numeric(data["stocks"].set_index("stock_id")["listed_shares"], errors="coerce")
+    shares_divisor = (shares * 1000).where(shares > 0)
+    ps_base   = revenue_ttm_ps_matrix(data["revenue"],   shares_divisor, dates)
+    pfcf_base = fcf_ttm_ps_matrix(data["cashflows"], shares_divisor, dates)
+
     print(f"  月數 {len(dates)}（{dates[0]} ~ {dates[-1]}）、股票 {adj.shape[1]} 支")
 
     print("回測中…")
-    pe = backtest("P/E", adj, eps_ttm, PE_MIN, PE_MAX)
-    pb = backtest("P/B", adj, bvps,    PB_MIN, PB_MAX)
+    pe   = backtest("P/E",   adj, eps_ttm,   PE_MIN,   PE_MAX)
+    pb   = backtest("P/B",   adj, bvps,      PB_MIN,   PB_MAX)
+    ps   = backtest("P/S",   adj, ps_base,   PS_MIN,   PS_MAX)
+    pfcf = backtest("P/FCF", adj, pfcf_base, PFCF_MIN, PFCF_MAX)
     uni = universe_returns(adj)
 
+    models = [("P/E 便宜", pe), ("P/B 便宜", pb), ("P/S 便宜", ps), ("P/FCF 便宜", pfcf)]
     parts = [summarize(uni, "全市場等權（對照）")]
-    for name, df in [("P/E 便宜", pe), ("P/B 便宜", pb)]:
+    for name, df in models:
         if not df.empty:
             parts.append(summarize(df, name))
     overall = pd.concat(parts, ignore_index=True)
 
     industry = data["stocks"].set_index("stock_id")["industry"]
-    signals = pd.concat([d for d in [pe, pb] if not d.empty], ignore_index=True)
+    signals = pd.concat([d for _, d in models if not d.empty], ignore_index=True)
     signals["industry"] = signals["stock_id"].map(industry)
     uni["industry"] = uni["stock_id"].map(industry)
 

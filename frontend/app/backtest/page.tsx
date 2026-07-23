@@ -10,6 +10,8 @@ export const metadata = {
 const MODELS = [
   { key: 'P/E', group: 'P/E 便宜', desc: '獲利估值' },
   { key: 'P/B', group: 'P/B 便宜', desc: '資產估值' },
+  { key: 'P/S', group: 'P/S 便宜', desc: '營收估值' },
+  { key: 'P/FCF', group: 'P/FCF 便宜', desc: '現金流估值' },
 ]
 
 function pct(v: number) {

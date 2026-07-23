@@ -220,8 +220,13 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 
 `/backtest` 是「模型體檢報告」頁；`ValuationCard` 與排行榜會就地顯示該模型在該產業的
 歷史實績，用意是不讓「便宜」被讀成「買了會賺」。資料來自
-`lib/backtestStats.ts`（由 Python 腳本產生，勿手改），**只有 P/E 與 P/B 回測過**，
-P/S／P/FCF 一律回傳 null 不顯示，不可拿其他模型的數字頂替。
+`lib/backtestStats.ts`（由 Python 腳本產生，勿手改）。
+
+四個模型（P/E、P/B、P/S、P/FCF）**都已回測**，`/backtest` 報告頁完整顯示四者的整體與
+分產業結果。但**個股卡片／排行榜的就地實績注入目前仍只有 P/E 與 P/B**：P/S／P/FCF 的
+「產業別」數字尚未做樣本外（前後期）持續性檢驗，而 P/E／P/B 做過、證明產業差異不延續
+（見 `lib/backtest.ts` 的 `OOS_CAVEAT`）。補做同樣檢驗前，不把這兩個新模型的產業數字
+注入買賣決策畫面。判讀一律經 `lib/backtest.isBacktested()`，不可拿其他模型的數字頂替。
 
 ### 股票詳情頁區塊順序（app/stock/[code]/page.tsx）
 
