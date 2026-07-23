@@ -318,8 +318,9 @@ export default function CheapLeaderboardClient(
                   && r.operating_margin != null && r.operating_margin >= 10
                   && r.roe != null && r.roe >= 0
                 // 此模型在該產業的歷史表現。只在落後同業時標示，不標好消息——
-                // 避免徽章泛濫。呈現一律中性：樣本外檢驗顯示產業差異不會延續
-                // （見 lib/backtest.ts 的 OOS_CAVEAT），不該讀成預警。
+                // 避免徽章泛濫。徽章一律中性（不上紅）：多數模型的產業差異不延續、
+                // 不該讀成預警；P/S 例外（排名會延續），延續性寫在警語文字裡
+                // （依模型挑警語見 lib/backtest.ts 的 caveatFor）。
                 // 「便宜×高殖利率」用它自己的回測，不可套用單模型 P/E 的實績——
                 // 篩選條件不同就是不同的策略（見 lib/yieldBacktest.ts）
                 const trap = model === 'consensus'

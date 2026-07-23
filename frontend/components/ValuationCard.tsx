@@ -114,9 +114,9 @@ const BAND_STYLE: Record<BandLevel, { icon: string; cls: string }> = {
   diffuse: { icon: '🌫️', cls: 'text-amber-800 bg-amber-50 border-amber-200' },
 }
 
-// 回測實績一律中性呈現。原本 bad 用紅框加 🪤，等於在說「別碰」——
-// 而 2026-07-22 的樣本外檢驗證明產業差異不會延續（見 lib/backtest.ts 的 OOS_CAVEAT），
-// 紅色警示是資料不支持的預測性暗示。數字照給，判斷留給使用者。
+// 回測實績一律中性呈現（灰框不上紅）。原本 bad 用紅框加 🪤，等於在說「別碰」——
+// 而樣本外檢驗顯示多數模型的產業差異不延續（P/S 例外，見 lib/backtest.ts 的 caveatFor），
+// 紅色警示對它們是資料不支持的預測性暗示。延續性的差異寫在警語文字裡，不靠顏色喊話。
 const TONE_BOX = 'bg-gray-50 border-gray-200 text-gray-600'
 const TONE_ICON: Record<Tone, string> = { bad: '📉', good: '📈', neutral: '📊' }
 

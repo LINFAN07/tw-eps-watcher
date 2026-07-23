@@ -222,11 +222,14 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 歷史實績，用意是不讓「便宜」被讀成「買了會賺」。資料來自
 `lib/backtestStats.ts`（由 Python 腳本產生，勿手改）。
 
-四個模型（P/E、P/B、P/S、P/FCF）**都已回測**，`/backtest` 報告頁完整顯示四者的整體與
-分產業結果。但**個股卡片／排行榜的就地實績注入目前仍只有 P/E 與 P/B**：P/S／P/FCF 的
-「產業別」數字尚未做樣本外（前後期）持續性檢驗，而 P/E／P/B 做過、證明產業差異不延續
-（見 `lib/backtest.ts` 的 `OOS_CAVEAT`）。補做同樣檢驗前，不把這兩個新模型的產業數字
-注入買賣決策畫面。判讀一律經 `lib/backtest.isBacktested()`，不可拿其他模型的數字頂替。
+四個模型（P/E、P/B、P/S、P/FCF）**都已回測**，`/backtest` 報告頁與個股卡片／排行榜
+都顯示其產業實績。判讀一律經 `lib/backtest.isBacktested()`，不可拿其他模型的數字頂替。
+
+**延續性警語依模型不同**（2026-07-23 樣本外檢驗，`scripts/audit_oos_persistence.py`，
+三切點 2021／2022／2023）：P/E／P/B／P/FCF 的產業超額排名前後期相關性都繞著 0 →
+不延續，用 `OOS_CAVEAT`；**唯獨 P/S 相關性 +0.45～0.62 穩定為正 → 產業排名會延續**，
+用 `OOS_CAVEAT_PS`。P/S 是四模型裡唯一例外，措辭要同時傳達「排名相對可信」與
+「仍不等於買了會賺、整體仍輸大盤」。要改延續性判斷一律經 `lib/backtest.caveatFor()`。
 
 ### 股票詳情頁區塊順序（app/stock/[code]/page.tsx）
 

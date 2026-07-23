@@ -13,19 +13,20 @@
 import { BY_INDUSTRY, OVERALL, INDUSTRY_HORIZON, type IndustryRow } from './backtestStats'
 
 /**
- * 個股卡片／排行榜的「就地實績」目前只注入 P/E 與 P/B。
+ * 四個模型（P/E、P/B、P/S、P/FCF）都已回測，個股卡片與排行榜都注入其產業實績。
  *
- * P/S、P/FCF 已回測（見 /backtest 報告頁，整體表現與 P/E/P/B 相近），但這兩者的
- * 「產業別」實績尚未做樣本外（前後期）持續性檢驗——P/E/P/B 做過、證明產業差異不會
- * 延續（見 OOS_CAVEAT）。在對這兩個新模型補做同樣的檢驗前，先不把它們的產業數字
- * 注入買賣決策畫面，以免被讀成選股依據。報告頁照常完整顯示四個模型（那是體檢不是推薦）。
+ * 2026-07-23 對這四者做了樣本外（前後期切分）持續性檢驗
+ * （`scripts/audit_oos_persistence.py`，三個切點 2021／2022／2023）：
+ * P/E、P/B、P/FCF 的產業超額排名前後期相關性都繞著 0 → 只描述過去、不預測未來，
+ * 沿用 `OOS_CAVEAT`。唯獨 P/S 相關性 +0.45～0.62、穩定為正 → 產業排名會延續，
+ * 改用 `OOS_CAVEAT_PS`。不可拿別的模型數字頂替。
  */
-export type BacktestedModel = 'pe' | 'pb'
+export type BacktestedModel = 'pe' | 'pb' | 'ps' | 'pfcf'
 
-const MODEL_LABEL: Record<BacktestedModel, string> = { pe: 'P/E', pb: 'P/B' }
+const MODEL_LABEL: Record<BacktestedModel, string> = { pe: 'P/E', pb: 'P/B', ps: 'P/S', pfcf: 'P/FCF' }
 
 export function isBacktested(model: string): model is BacktestedModel {
-  return model === 'pe' || model === 'pb'
+  return model === 'pe' || model === 'pb' || model === 'ps' || model === 'pfcf'
 }
 
 export type Tone = 'good' | 'neutral' | 'bad'
@@ -40,21 +41,34 @@ export interface TrackRecord extends IndustryRow {
 export const EXCESS_THRESHOLD = 3
 
 /**
- * 這句必須跟著每一則產業實績一起出現。
+ * 產業實績的「延續性」警語，依模型不同。這句必須跟著每一則產業實績一起出現。
  *
- * 2026-07-22 樣本外檢驗：用前半期（2016-2021）算出各產業的超額報酬，
- * 看後半期（2022 起）是否延續——結果是不延續，而且方向相反：
+ * 樣本外檢驗（`scripts/audit_oos_persistence.py`，把訊號切前後兩半互相驗證，
+ * 三個切點 2021／2022／2023）：
  *
- *   前期被標「落後」的 16 個組合 → 後期仍落後僅 19%、反轉為領先 56%
- *   後期超額中位數 +3.91pp（前期 -6.09pp）
- *   前期被標「領先」者 → 後期超額中位數僅 +2.33pp，比前者還低
- *   前後期相關性 Pearson -0.06、Spearman -0.02
+ *   P/E   前後期相關性約 -0.09～+0.07
+ *   P/B   約 +0.09～+0.19
+ *   P/FCF 約 -0.20～+0.12          ← 以上三者都繞著 0，產業排名不延續
+ *   P/S   約 +0.45～+0.62、穩定為正 ← 唯一延續（前期落後的產業後期多半仍落後）
  *
- * 也就是說這些數字只描述過去，對未來沒有預測力。資料本身是真的、
- * 值得呈現（本站定位是模型體檢報告），但不可讓使用者讀成預警。
+ * 故 OOS_CAVEAT（不延續）用於 P/E／P/B／P/FCF 與殖利率；P/S 另用 OOS_CAVEAT_PS。
  */
 export const OOS_CAVEAT = '這是過去的紀錄，不是預測——我們實際驗證過：一個產業以前落後，'
   + '之後不一定繼續落後，早期落後的產業後來反而常常稍微好一些。'
+
+/**
+ * P/S 專用。它是四個模型裡唯一通過樣本外檢驗、產業排名會延續的（見上）。
+ * 措辭要同時傳達兩件事：這個排名相對可信 vs 它仍不等於「買了會賺」——
+ * P/S 便宜股整體報酬仍輸大盤，延續的只是「產業間的相對排名」。
+ */
+export const OOS_CAVEAT_PS = '這個排名相對可信——我們把資料切成前後兩半互相驗證，'
+  + 'P/S 是四個模型裡唯一「產業排名會延續」的：某產業以前有效或落後，之後多半維持。'
+  + '但這說的是產業間的相對高下，不是「買了就會賺」，P/S 便宜股整體報酬仍輸大盤。'
+
+/** 依模型挑對應的延續性警語 */
+function caveatFor(model: BacktestedModel): string {
+  return model === 'ps' ? OOS_CAVEAT_PS : OOS_CAVEAT
+}
 
 /**
  * 查某模型在某產業的歷史實績。
@@ -71,11 +85,12 @@ export function getTrackRecord(model: string, industry: string | null | undefine
     : 'neutral'
 
   // 純陳述歷史，不下預測性判語。原本 bad 寫「注意：多為價值陷阱」、
-  // good 寫「表現較佳」，都是把回顧當預測——樣本外檢驗證明不成立（見 OOS_CAVEAT）。
+  // good 寫「表現較佳」，都是把回顧當預測——多數模型的樣本外檢驗不成立（見 OOS_CAVEAT）。
+  // 但延續性警語依模型不同：P/S 的產業排名會延續，用 OOS_CAVEAT_PS（見 caveatFor）。
   const verdict = `這個產業裡被判「便宜」的 ${MODEL_LABEL[model]} 股，`
     + `過去買進後抱滿 ${INDUSTRY_HORIZON} 個月，報酬中位數 ${row.median.toFixed(1)}%，`
     + `比整個產業的平均水準${row.excess >= 0 ? '高' : '低'} ${Math.abs(row.excess).toFixed(1)} 個百分點`
-    + `（${row.n.toLocaleString()} 筆歷史紀錄）。` + OOS_CAVEAT
+    + `（${row.n.toLocaleString()} 筆歷史紀錄）。` + caveatFor(model)
 
   return { ...row, tone, verdict }
 }
