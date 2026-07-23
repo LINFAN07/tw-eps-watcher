@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回測報告白話版（四模型完整版）— 便宜訊號到底能不能賺？</title>
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg:#f6f7f9; --surface:#ffffff; --surface2:#eef1f5; --line:#dde2e9;
+    --ink:#1a1e26; --muted:#586374; --faint:#8b94a3;
+    --accent:#2f4bd8; --accent-soft:rgba(47,75,216,.09); --accent-line:rgba(47,75,216,.28);
+    --up:#d42a49;   --up-soft:rgba(212,42,73,.10);
+    --down:#0f9d76; --down-soft:rgba(15,157,118,.10);
+    --warn:#b0761a; --warn-soft:rgba(176,118,26,.12);
+    --track:#e6e9ef;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1218; --surface:#171b22; --surface2:#1e232c; --line:#2b313c;
+      --ink:#e7eaf0; --muted:#99a3b2; --faint:#6b7481;
+      --accent:#7f8dff; --accent-soft:rgba(127,141,255,.13); --accent-line:rgba(127,141,255,.35);
+      --up:#ff5f7a; --up-soft:rgba(255,95,122,.14);
+      --down:#2ec59a; --down-soft:rgba(46,197,154,.14);
+      --warn:#e0a24a; --warn-soft:rgba(224,162,74,.14);
+      --track:#262c36;
+    }
+  }
+  :root[data-theme="light"]{
+    color-scheme: light;
+    --bg:#f6f7f9; --surface:#ffffff; --surface2:#eef1f5; --line:#dde2e9;
+    --ink:#1a1e26; --muted:#586374; --faint:#8b94a3;
+    --accent:#2f4bd8; --accent-soft:rgba(47,75,216,.09); --accent-line:rgba(47,75,216,.28);
+    --up:#d42a49; --up-soft:rgba(212,42,73,.10);
+    --down:#0f9d76; --down-soft:rgba(15,157,118,.10);
+    --warn:#b0761a; --warn-soft:rgba(176,118,26,.12); --track:#e6e9ef;
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --bg:#0f1218; --surface:#171b22; --surface2:#1e232c; --line:#2b313c;
+    --ink:#e7eaf0; --muted:#99a3b2; --faint:#6b7481;
+    --accent:#7f8dff; --accent-soft:rgba(127,141,255,.13); --accent-line:rgba(127,141,255,.35);
+    --up:#ff5f7a; --up-soft:rgba(255,95,122,.14);
+    --down:#2ec59a; --down-soft:rgba(46,197,154,.14);
+    --warn:#e0a24a; --warn-soft:rgba(224,162,74,.14); --track:#262c36;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei","Segoe UI",system-ui,sans-serif;
+    line-height:1.78; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap{max-width:820px; margin:0 auto; padding:0 22px 96px;}
+  header{max-width:820px; margin:0 auto; padding:60px 22px 30px;}
+  .eyebrow{color:var(--accent); font-weight:700; letter-spacing:3px; font-size:12.5px;}
+  header h1{font-size:33px; line-height:1.32; margin:14px 0 12px; text-wrap:balance; letter-spacing:-.4px;}
+  header .sub{color:var(--muted); font-size:16px; max-width:60ch; margin:0;}
+  .meta{display:flex; flex-wrap:wrap; gap:6px 22px; margin-top:22px; padding-top:16px; border-top:1px solid var(--line); font-size:13px; color:var(--faint);}
+  .meta b{color:var(--muted); font-weight:600;}
+
+  h2{font-size:24px; margin:60px 0 6px; letter-spacing:-.3px; scroll-margin-top:20px; text-wrap:balance;}
+  h2 .qn{color:var(--accent); font-weight:800; margin-right:.4em; font-variant-numeric:tabular-nums;}
+  h3{font-size:17px; margin:30px 0 4px;}
+  .lead{color:var(--muted); margin:2px 0 20px; font-size:15.5px;}
+  p{margin:14px 0;}
+  strong{color:var(--ink); font-weight:700;}
+  em{font-style:normal; color:var(--accent); font-weight:600;}
+  a{color:var(--accent); text-underline-offset:3px;}
+
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:20px 24px; margin:18px 0;}
+  .card h3{margin-top:0}
+  .rail{border-left:4px solid var(--accent);}
+  .rail.up{border-left-color:var(--up);}
+  .rail.warn{border-left-color:var(--warn);}
+
+  .callout{display:flex; gap:13px; align-items:flex-start; padding:15px 18px; border-radius:12px; margin:18px 0; font-size:15px; border:1px solid transparent;}
+  .callout .ico{font-size:20px; line-height:1.5; flex-shrink:0;}
+  .callout.info{background:var(--accent-soft); border-color:var(--accent-line);}
+  .callout.warn{background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 34%, transparent);}
+  .callout.win {background:var(--up-soft);  border-color:color-mix(in srgb,var(--up) 30%, transparent);}
+
+  .tldr{display:grid; grid-template-columns:1fr 1fr; gap:13px; margin:26px 0;}
+  .tldr .box{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:17px 18px;}
+  .tldr .box .t{font-size:15px; font-weight:700; margin:9px 0 5px; line-height:1.5;}
+  .tldr .box .d{font-size:13.5px; color:var(--muted); line-height:1.65;}
+  .tag{display:inline-block; font-size:11.5px; padding:3px 10px; border-radius:20px; font-weight:700; letter-spacing:.5px;}
+  .tag.a{background:var(--accent-soft); color:var(--accent);}
+  .tag.w{background:var(--warn-soft); color:var(--warn);}
+  .tag.u{background:var(--up-soft); color:var(--up);}
+
+  .glossary{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:6px 24px 20px; margin:22px 0;}
+  .glossary dt{font-weight:700; margin-top:18px; font-size:15.5px;}
+  .glossary dd{margin:3px 0 0; color:var(--muted); font-size:14.5px;}
+  .glossary dd .ex{display:block; color:var(--faint); font-size:13.5px; margin-top:2px;}
+
+  .numrow{display:flex; gap:20px; flex-wrap:wrap; margin:22px 0;}
+  .numrow .u{flex:1; min-width:140px; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px;}
+  .bignum{font-size:36px; font-weight:800; line-height:1; letter-spacing:-1px;}
+  .bignum.up{color:var(--up);} .bignum.a{color:var(--accent);} .bignum.dn{color:var(--down);}
+  .numrow .lbl{font-size:13px; color:var(--muted); margin-top:9px; line-height:1.5;}
+
+  .tblwrap{overflow-x:auto; margin:18px 0; border:1px solid var(--line); border-radius:12px;}
+  table{border-collapse:collapse; width:100%; font-size:14.5px; min-width:480px;}
+  th,td{padding:10px 15px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{background:var(--surface2); color:var(--muted); font-weight:600; font-size:12.5px; letter-spacing:.3px;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr.pick{background:var(--accent-soft);}
+  tbody tr.caut{background:var(--warn-soft);}
+  td.up{color:var(--up); font-weight:700;} td.dn{color:var(--down); font-weight:700;}
+  .cap{font-size:12.5px; color:var(--faint); margin:8px 4px 0; line-height:1.6;}
+
+  .chart{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px 22px 16px; margin:18px 0;}
+  .chart .ct{font-size:13px; font-weight:700; color:var(--muted); letter-spacing:.5px; margin-bottom:16px;}
+  .hbars{display:flex; flex-direction:column; gap:11px;}
+  .hbar{display:grid; grid-template-columns:120px 1fr 62px; align-items:center; gap:12px;}
+  .hbar .hl{font-size:13px; color:var(--ink);}
+  .htrack{background:var(--track); border-radius:6px; height:20px; overflow:hidden; position:relative;}
+  .hfill{height:100%; border-radius:6px; background:var(--accent);}
+  .hfill.mut{background:var(--faint);} .hfill.up{background:var(--up);} .hfill.warn{background:var(--warn);} .hfill.down{background:var(--down);}
+  .hbar .hv{font-size:13.5px; font-weight:700; text-align:right;}
+  .hv.up{color:var(--up);} .hv.dn{color:var(--down);} .hv.a{color:var(--accent);}
+  /* 50% 及格線 */
+  .refline{position:absolute; top:-4px; bottom:-4px; width:0; border-left:2px dashed var(--warn); z-index:2;}
+  .reftag{font-size:11px; color:var(--warn); font-weight:700;}
+
+  .dchart{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin:18px 0;}
+  .dchart .ct{font-size:13px; font-weight:700; color:var(--muted); letter-spacing:.5px;}
+  .dlegend{font-size:12px; color:var(--faint); margin:4px 0 18px;}
+  .dlegend .sw{display:inline-block; width:9px; height:9px; border-radius:2px; vertical-align:baseline; margin:0 3px 0 10px;}
+  .drows{display:flex; flex-direction:column; gap:8px;}
+  .drow{display:grid; grid-template-columns:118px 1fr 1fr 52px; align-items:center; gap:6px;}
+  .drow .dl{font-size:12.5px; text-align:right; color:var(--ink); line-height:1.3;}
+  .dneg,.dpos{height:17px; display:flex;}
+  .dneg{justify-content:flex-end; border-right:2px solid var(--line);}
+  .dpos{justify-content:flex-start;}
+  .dneg i{background:var(--down); border-radius:4px 0 0 4px; height:100%;}
+  .dpos i{background:var(--up); border-radius:0 4px 4px 0; height:100%;}
+  .drow .dv{font-size:12.5px; font-weight:700; text-align:left; padding-left:4px;}
+  .dv.up{color:var(--up);} .dv.dn{color:var(--down);}
+
+  .toc{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px 24px; margin:30px 0;}
+  .toc .th{font-weight:700; font-size:14px;}
+  .toc ol{margin:10px 0 0; padding-left:20px; color:var(--muted);}
+  .toc li{margin:7px 0;}
+  .toc a{text-decoration:none;} .toc a:hover{text-decoration:underline;}
+
+  .disc{background:var(--warn-soft); border:1px solid color-mix(in srgb,var(--warn) 28%, transparent); border-radius:12px; padding:16px 20px; font-size:13.5px; color:var(--ink); margin-top:26px;}
+  footer{border-top:1px solid var(--line); margin-top:34px; padding-top:22px; color:var(--faint); font-size:13px; line-height:1.8;}
+
+  @media(max-width:600px){
+    .tldr{grid-template-columns:1fr;}
+    header h1{font-size:26px;}
+    h2{font-size:20px;}
+    .hbar{grid-template-columns:96px 1fr 54px;}
+    .drow{grid-template-columns:92px 1fr 1fr 46px;}
+  }
+  @media print{
+    :root{--bg:#fff; --surface:#fff; --surface2:#f2f3f5; --line:#cfd4dc; --track:#e6e9ef;
+      --ink:#16181d; --muted:#444; --faint:#666; --accent:#26379e; --up:#b81f3d; --down:#0b7a5c; --warn:#8a5a10;}
+    body{background:#fff; font-size:12pt; line-height:1.55;}
+    .wrap{padding-bottom:0;} header{padding-top:12px;}
+    .card,.chart,.dchart,.tblwrap,.callout,.numrow .u,.tldr .box,.glossary{break-inside:avoid; page-break-inside:avoid;}
+    h2{break-after:avoid; margin-top:26px;} .toc{display:none;}
+    a{color:inherit; text-decoration:none;} header .sub,.lead{color:#333;}
+  }
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">台股估值系統 · 回測體檢報告 · 四模型完整版</div>
+  <h1>四種「便宜」訊號，哪個能賺？<br>用十年歷史資料，誠實回答</h1>
+  <p class="sub">系統有 P/E、P/B、P/S、P/FCF 四把「便宜尺」。這份報告把它們跑過的回測全翻成白話，讓沒有金融背景的你也知道：哪把尺可信、什麼情況會踩雷。</p>
+  <div class="meta">
+    <span><b>資料截至</b>　2026-07-23</span>
+    <span><b>回測範圍</b>　全台股約 2,000 檔 · 近 10 年</span>
+    <span><b>持有期</b>　6 / 12 / 24 個月</span>
+    <span><b>報酬</b>　已還原股息</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="toc">
+    <div class="th">這份報告回答 6 個問題</div>
+    <ol>
+      <li><a href="#q1">四把「便宜尺」是什麼？買了真的會賺嗎？</a></li>
+      <li><a href="#q2">它們贏得了大盤（0050）嗎？</a></li>
+      <li><a href="#q3">哪些產業的「便宜」可信、哪些是陷阱？</a></li>
+      <li><a href="#q4">加上「只挑好公司」的濾網，會更賺嗎？</a></li>
+      <li><a href="#q5">排行榜上的「徽章」該怎麼看？（含風險對比圖）</a></li>
+      <li><a href="#q6">有沒有更強的組合？（便宜＋高股息）</a></li>
+    </ol>
+  </div>
+
+  <!-- 名詞 -->
+  <h2>先看懂幾個詞，剩下都好懂</h2>
+  <p class="lead">全篇只反覆用到這幾個詞，先花一分鐘認識它們。</p>
+  <div class="glossary">
+    <dl>
+      <dt>四把「便宜尺」：P/E、P/B、P/S、P/FCF</dt>
+      <dd>都是用「這支股票自己的歷史」判斷現在貴或便宜，只是<strong>比較的基準不同</strong>：
+        <span class="ex">P/E＝股價 vs 每股<strong>賺的錢</strong>（最常用）／ P/B＝股價 vs 每股<strong>家底</strong>（淨值）／ P/S＝股價 vs 每股<strong>營收</strong>（還沒穩定獲利的公司也能量）／ P/FCF＝股價 vs 每股<strong>能自由運用的現金</strong>（最難灌水）。</span></dd>
+      <dt>回測（Backtest）</dt>
+      <dd>把時光倒流，假裝十年前就照訊號選股，看到今天到底賺還賠。<span class="ex">＝用歷史成績單檢驗方法有沒有用。</span></dd>
+      <dt>中位數報酬</dt>
+      <dd>把所有案例報酬從低排到高、站正中間那一個。<span class="ex">比「平均」更貼近體感——平均容易被少數暴賺的極端值拉高。</span></dd>
+      <dt>0050（大盤對照）</dt>
+      <dd>台灣 50 指數 ETF，等於「無腦買一整個台股」。它是及格線：贏它才叫真本事，輸它不如躺著買 0050。</dd>
+      <dt>勝率</dt>
+      <dd>這裡專指「同一段時間內，贏過 0050 的比例」。超過 50% 代表一半以上情況能打敗大盤。</dd>
+    </dl>
+  </div>
+
+  <!-- TL;DR -->
+  <h2>一分鐘版：五個重點</h2>
+  <div class="tldr">
+    <div class="box"><span class="tag a">好消息</span>
+      <div class="t">四把尺 ✅ 都贏「隨機亂買」</div>
+      <div class="d">P/E、P/B、P/S、P/FCF 的便宜組，持有一年中位報酬都在 +7% 以上，明顯高於全市場亂買的 +4.4%。</div></div>
+    <div class="box"><span class="tag u">最亮眼</span>
+      <div class="t">P/FCF（自由現金流）最強</div>
+      <div class="d">便宜組持有一年 +9.2%（四把尺最高）；抱兩年時勝過 0050 的比例 58.9%，是唯一過半的模型。但樣本最少，先別當定論。</div></div>
+    <div class="box"><span class="tag w">要誠實</span>
+      <div class="t">但多數情況 ✕ 贏不了 0050</div>
+      <div class="d">除了 P/FCF 長抱，其餘模型打敗 0050 的比例都落在 45～47%，過半數情況輸給躺著買大盤。</div></div>
+    <div class="box"><span class="tag a">關鍵</span>
+      <div class="t">產業決定成敗</div>
+      <div class="d">電子、半導體的「便宜」很有效；傳產、金融、觀光的「便宜」常常是陷阱。</div></div>
+    <div class="box" style="grid-column:1/-1"><span class="tag u">最強組合</span>
+      <div class="t">便宜 ＋ 高股息 ＝ 資料裡最亮眼的搭配</div>
+      <div class="d">P/E 便宜又高殖利率，持有兩年中位 +32.9%、勝過 0050 比例站上五成、約 79% 會賺。</div></div>
+  </div>
+
+  <div class="callout info">
+    <span class="ico">🔎</span>
+    <div><strong>好消息，這版補齊了：</strong>四把尺現在<strong>全部都做完「產業別」回測</strong>，網站個股頁也都會顯示它們的產業實績。而且我們還多做了一道最嚴格的「樣本外」檢驗（把歷史切成前後兩半互相驗證），得到一個很重要、也很誠實的發現——見 <a href="#q3">Q3</a>。</div>
+  </div>
+
+  <!-- Q1 -->
+  <h2 id="q1"><span class="qn">Q1</span>四把「便宜尺」買了真的會賺嗎？</h2>
+  <p class="lead">先問最基本的：這四把尺標「便宜」的股票，成績有沒有比「閉著眼睛亂買」好？</p>
+
+  <div class="chart">
+    <div class="ct">持有一年 · 便宜組中位報酬（四模型 vs 亂買）</div>
+    <div class="hbars">
+      <div class="hbar"><span class="hl">全市場亂買</span><div class="htrack"><div class="hfill mut" style="width:47%"></div></div><span class="hv up">+4.36%</span></div>
+      <div class="hbar"><span class="hl">P/E 便宜</span><div class="htrack"><div class="hfill" style="width:79%"></div></div><span class="hv up">+7.26%</span></div>
+      <div class="hbar"><span class="hl">P/B 便宜</span><div class="htrack"><div class="hfill" style="width:76%"></div></div><span class="hv up">+7.01%</span></div>
+      <div class="hbar"><span class="hl">P/S 便宜</span><div class="htrack"><div class="hfill" style="width:78%"></div></div><span class="hv up">+7.18%</span></div>
+      <div class="hbar"><span class="hl">P/FCF 便宜</span><div class="htrack"><div class="hfill up" style="width:100%"></div></div><span class="hv up">+9.18%</span></div>
+    </div>
+  </div>
+
+  <div class="callout win">
+    <span class="ico">✅</span>
+    <div><strong>結論：四把尺全部有用。</strong>不管哪一把，「便宜」組的一年報酬都穩定高過全市場平均。其中 <strong>P/FCF（自由現金流）最突出</strong>——因為「能拿出多少現金」最難用會計手法灌水，反而是最誠實的體質指標。</div>
+  </div>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>便宜尺</th><th>它在看什麼</th><th>1 年中位</th><th>2 年中位</th><th>1 年會賺機率</th></tr></thead>
+      <tbody>
+        <tr><td>全市場亂買</td><td>對照組</td><td class="up">+4.36%</td><td class="up">+14.29%</td><td>56.6%</td></tr>
+        <tr class="pick"><td>P/E</td><td>每股賺的錢</td><td class="up">+7.26%</td><td class="up">+22.42%</td><td>60.9%</td></tr>
+        <tr class="pick"><td>P/B</td><td>每股家底</td><td class="up">+7.01%</td><td class="up">+22.98%</td><td>60.0%</td></tr>
+        <tr class="pick"><td>P/S</td><td>每股營收</td><td class="up">+7.18%</td><td class="up">+22.49%</td><td>59.9%</td></tr>
+        <tr class="pick"><td>P/FCF</td><td>每股自由現金</td><td class="up">+9.18%</td><td class="up">+17.76%</td><td>64.4%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="cap">樣本數：P/E 約 1.5 萬、P/B 約 3 萬、P/S 約 1.8 萬、P/FCF 約 1.1 萬筆（FCF 為負的季度會跳過，故樣本最少）。跨度約 10 年。</p>
+
+  <!-- Q2 -->
+  <h2 id="q2"><span class="qn">Q2</span>它們贏得了大盤 0050 嗎？</h2>
+  <p class="lead">這是最誠實、也最重要的一題。贏亂買不稀奇——真正的門檻是：贏不贏得了「無腦買 0050」？</p>
+
+  <div class="chart">
+    <div class="ct">贏過 0050 的比例（越高越好，50% 是及格線）</div>
+    <div class="hbars">
+      <div class="hbar"><span class="hl">P/B 便宜 · 1年</span><div class="htrack"><div class="refline" style="left:83.3%"></div><div class="hfill mut" style="width:74.7%"></div></div><span class="hv">44.8%</span></div>
+      <div class="hbar"><span class="hl">P/E 便宜 · 1年</span><div class="htrack"><div class="refline" style="left:83.3%"></div><div class="hfill mut" style="width:76.3%"></div></div><span class="hv">45.8%</span></div>
+      <div class="hbar"><span class="hl">P/S 便宜 · 1年</span><div class="htrack"><div class="refline" style="left:83.3%"></div><div class="hfill mut" style="width:78.3%"></div></div><span class="hv">47.0%</span></div>
+      <div class="hbar"><span class="hl">P/FCF 便宜 · 1年</span><div class="htrack"><div class="refline" style="left:83.3%"></div><div class="hfill mut" style="width:78.8%"></div></div><span class="hv">47.3%</span></div>
+      <div class="hbar"><span class="hl">P/FCF 便宜 · 抱2年</span><div class="htrack"><div class="refline" style="left:83.3%"></div><div class="hfill a" style="width:98.2%; background:var(--accent)"></div></div><span class="hv a">58.9%</span></div>
+    </div>
+    <div class="cap" style="text-align:right"><span class="reftag">┊ 虛線＝50% 及格線</span></div>
+  </div>
+
+  <div class="callout warn">
+    <span class="ico">⚠️</span>
+    <div><strong>老實說：多數情況贏不了。</strong>四把尺持有一年打敗 0050 的比例都只有 45～47%，過半數情況反而輸給躺著買大盤。<strong>唯一的例外是 P/FCF 長抱兩年（58.9%）</strong>——但那也剛好落在 0050 表現平淡的期間、且樣本最少，先當「值得追蹤」而非「已成定論」。</div>
+  </div>
+
+  <p>為什麼贏不了？因為 0050 裝的是台積電這些權值股，過去十年剛好走了一大段多頭。<strong>「便宜」幫你贏過一般個股，卻贏不過這段特別強的大盤行情。</strong>「選股能不能長期勝過大盤」本來就是全世界最難的事——連多數專業基金經理人也做不到。</p>
+
+  <div class="callout info">
+    <span class="ico">🧭</span>
+    <div><strong>正確的用法：</strong>把這套系統當成「你想主動選股時，幫你篩掉貴的、留下相對便宜的濾網」，而不是「保證跑贏大盤的聖杯」。想要簡單又穩，0050 本身就是很好的選擇。</div>
+  </div>
+
+  <!-- Q3 -->
+  <h2 id="q3"><span class="qn">Q3</span>哪些產業的「便宜」可信、哪些是陷阱？</h2>
+  <p class="lead">這是整份報告最實用的一段：同樣是「便宜」，換個產業，結果天差地遠。四把尺都做完產業別回測了，下面先用最常用的 P/E 當例子。</p>
+
+  <p>下圖看的是「<strong>超額報酬</strong>」——便宜股比同產業其他股票<em>多賺</em>了多少。往右（紅）代表「這個產業挑便宜的確實比較好」；往左（綠）代表「這個產業，便宜反而是陷阱，越便宜越危險」。</p>
+
+  <div class="dchart">
+    <div class="ct">各產業「便宜」的超額報酬（P/E 模型 · 持有 1 年）</div>
+    <div class="dlegend">依台股慣例<span class="sw" style="background:var(--up)"></span>紅＝正（贏同業）<span class="sw" style="background:var(--down)"></span>綠＝負（輸同業）</div>
+    <div class="drows">
+      <div class="drow"><span class="dl">其他電子業</span><span class="dneg"></span><span class="dpos"><i style="width:81%"></i></span><span class="dv up">+11.4</span></div>
+      <div class="drow"><span class="dl">光電業</span><span class="dneg"></span><span class="dpos"><i style="width:76%"></i></span><span class="dv up">+10.6</span></div>
+      <div class="drow"><span class="dl">其他電子類</span><span class="dneg"></span><span class="dpos"><i style="width:68%"></i></span><span class="dv up">+9.5</span></div>
+      <div class="drow"><span class="dl">半導體業</span><span class="dneg"></span><span class="dpos"><i style="width:55%"></i></span><span class="dv up">+7.8</span></div>
+      <div class="drow"><span class="dl">通信網路業</span><span class="dneg"></span><span class="dpos"><i style="width:54%"></i></span><span class="dv up">+7.5</span></div>
+      <div class="drow"><span class="dl">電子通路業</span><span class="dneg"></span><span class="dpos"><i style="width:50%"></i></span><span class="dv up">+7.0</span></div>
+      <div class="drow"><span class="dl">油電燃氣業</span><span class="dneg"><i style="width:36%"></i></span><span class="dpos"></span><span class="dv dn">−5.0</span></div>
+      <div class="drow"><span class="dl">橡膠工業</span><span class="dneg"><i style="width:41%"></i></span><span class="dpos"></span><span class="dv dn">−5.7</span></div>
+      <div class="drow"><span class="dl">塑膠工業</span><span class="dneg"><i style="width:42%"></i></span><span class="dpos"></span><span class="dv dn">−5.9</span></div>
+      <div class="drow"><span class="dl">綠能環保</span><span class="dneg"><i style="width:50%"></i></span><span class="dpos"></span><span class="dv dn">−7.0</span></div>
+      <div class="drow"><span class="dl">數位雲端類</span><span class="dneg"><i style="width:60%"></i></span><span class="dpos"></span><span class="dv dn">−8.5</span></div>
+      <div class="drow"><span class="dl">金融業</span><span class="dneg"><i style="width:61%"></i></span><span class="dpos"></span><span class="dv dn">−8.5</span></div>
+    </div>
+  </div>
+  <p class="cap">數值為超額報酬（百分點）。已排除樣本過少的極端產業；各產業樣本數 40～1,600 檔不等。</p>
+
+  <div class="callout warn">
+    <span class="ico">💡</span>
+    <div><strong>為什麼傳產、景氣循環股的「便宜」是陷阱？</strong>這類公司賺錢時 EPS 暴衝，本益比算出來就顯得超便宜——但那往往是<em>景氣高峰</em>，接下來就要走下坡。看到它「便宜」進場，常常買在最高點。電子成長股則相反，便宜通常是真的被錯殺。</div>
+  </div>
+
+  <h3>⚠️ 但有個關鍵陷阱：多數「產業排名」不會延續到未來</h3>
+  <p>上面那張圖很好看，但我們必須誠實：它是「事後回顧」。我們做了最嚴格的檢驗——把十年資料切成<strong>前半段</strong>與<strong>後半段</strong>，用前半段找出哪些產業有效，再看後半段這些產業是否<em>還</em>有效（相關性越接近 +1 代表越會延續，接近 0 代表純屬運氣）。</p>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>便宜尺</th><th>前後半段 · 產業排名相關性</th><th>白話翻譯</th></tr></thead>
+      <tbody>
+        <tr><td>P/E</td><td>−0.09 ~ +0.07</td><td>幾乎為零，過去有效 ≠ 未來有效</td></tr>
+        <tr><td>P/B</td><td>+0.09 ~ +0.19</td><td>很弱，參考價值低</td></tr>
+        <tr><td>P/FCF</td><td>−0.20 ~ +0.12</td><td>幾乎為零，不能外推</td></tr>
+        <tr class="pick"><td>P/S</td><td>+0.45 ~ +0.62</td><td>穩定為正 → 唯一會延續</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout info">
+    <span class="ico">🧪</span>
+    <div><strong>意思是：</strong>上面那張 P/E 產業圖比較像「歷史紀錄」——過去哪個產業的便宜有效，多半是運氣，不保證下次還準。<strong>四把尺裡只有 P/S（股價營收比）例外</strong>：它的產業排名前後半段穩定一致，是唯一能「拿過去推未來」的。所以下面這張 P/S 產業圖，含金量比其他三把尺高。</div>
+  </div>
+
+  <div class="dchart">
+    <div class="ct">各產業「便宜」的超額報酬（P/S 模型 · 唯一通過樣本外檢驗）</div>
+    <div class="dlegend">依台股慣例<span class="sw" style="background:var(--up)"></span>紅＝正（贏同業）<span class="sw" style="background:var(--down)"></span>綠＝負（輸同業）</div>
+    <div class="drows">
+      <div class="drow"><span class="dl">航運業</span><span class="dneg"></span><span class="dpos"><i style="width:100%"></i></span><span class="dv up">+28.0</span></div>
+      <div class="drow"><span class="dl">半導體業</span><span class="dneg"></span><span class="dpos"><i style="width:87%"></i></span><span class="dv up">+24.3</span></div>
+      <div class="drow"><span class="dl">光電業</span><span class="dneg"></span><span class="dpos"><i style="width:54%"></i></span><span class="dv up">+15.2</span></div>
+      <div class="drow"><span class="dl">電腦及週邊</span><span class="dneg"></span><span class="dpos"><i style="width:50%"></i></span><span class="dv up">+13.9</span></div>
+      <div class="drow"><span class="dl">電子零組件業</span><span class="dneg"></span><span class="dpos"><i style="width:50%"></i></span><span class="dv up">+13.9</span></div>
+      <div class="drow"><span class="dl">金融保險</span><span class="dneg"></span><span class="dpos"><i style="width:27%"></i></span><span class="dv up">+7.6</span></div>
+      <div class="drow"><span class="dl">造紙工業</span><span class="dneg"><i style="width:15%"></i></span><span class="dpos"></span><span class="dv dn">−4.1</span></div>
+      <div class="drow"><span class="dl">綠能環保</span><span class="dneg"><i style="width:20%"></i></span><span class="dpos"></span><span class="dv dn">−5.6</span></div>
+      <div class="drow"><span class="dl">數位雲端</span><span class="dneg"><i style="width:29%"></i></span><span class="dpos"></span><span class="dv dn">−8.1</span></div>
+      <div class="drow"><span class="dl">其他電子業</span><span class="dneg"><i style="width:40%"></i></span><span class="dpos"></span><span class="dv dn">−11.1</span></div>
+      <div class="drow"><span class="dl">文化創意業</span><span class="dneg"><i style="width:46%"></i></span><span class="dpos"></span><span class="dv dn">−12.9</span></div>
+    </div>
+  </div>
+  <p class="cap">已排除樣本 &lt;30 或極小樣本的雜訊產業（如玻璃陶瓷 n=41、電器電纜 n=52，超額雖高但樣本太少）。數值為超額報酬（百分點）。</p>
+
+  <!-- Q4 -->
+  <h2 id="q4"><span class="qn">Q4</span>加上「只挑好公司」的濾網，會更賺嗎？</h2>
+  <p class="lead">直覺會想：既然要買便宜的，再加一條「而且必須是高獲利的好公司」，不是更穩嗎？<strong>資料給了很反直覺的答案。</strong></p>
+
+  <div class="callout warn">
+    <span class="ico">🙃</span>
+    <div><strong>結果完全相反：加了濾網，報酬不升反降，還更容易大賠。</strong>我們測了兩種常見的「好公司」條件——高股東報酬率（ROE≥15%）和高本業利益率（≥10%），兩個都拖累成績。</div>
+  </div>
+
+  <div class="chart">
+    <div class="ct">便宜股 · 持有一年中位報酬（加濾網 vs 不加）</div>
+    <div class="hbars">
+      <div class="hbar"><span class="hl">不加濾網</span><div class="htrack"><div class="hfill" style="width:73%"></div></div><span class="hv up">+7.27%</span></div>
+      <div class="hbar"><span class="hl">只留 ROE≥15%</span><div class="htrack"><div class="hfill warn" style="width:54%"></div></div><span class="hv up">+5.42%</span></div>
+      <div class="hbar"><span class="hl">只留利益率≥10%</span><div class="htrack"><div class="hfill warn" style="width:47%"></div></div><span class="hv up">+4.69%</span></div>
+      <div class="hbar"><span class="hl">被濾網丟掉的</span><div class="htrack"><div class="hfill" style="width:96%"></div></div><span class="hv up">+9.5%</span></div>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <span class="ico">🔑</span>
+    <div><strong>原因跟 Q3 是同一個：</strong>在「便宜股」這個池子裡，帳面上獲利最漂亮（高 ROE、高利益率）的公司，很多正是<em>景氣循環到達高峰</em>的公司——看起來最優質、其實最危險。真正安穩的，反而是那些獲利普通、被濾網嫌棄丟掉的公司。</div>
+  </div>
+
+  <div class="card rail">
+    <strong>➜ 因此系統已經做了調整：</strong>這兩個「品質濾網」現在<strong>預設關閉</strong>，排行榜不再自動幫你砍掉這些股票。你若想自己加回來研究，仍可手動開啟。
+  </div>
+
+  <!-- Q5 -->
+  <h2 id="q5"><span class="qn">Q5</span>排行榜上的「徽章」該怎麼看？</h2>
+  <p class="lead">排行榜上有兩種標記，Q4 的發現直接改變了它們的意義。這裡先看一張<strong>風險對比圖</strong>，一眼看懂三種股票的「大賠機率」差多少。</p>
+
+  <div class="chart">
+    <div class="ct">三種徽章的下檔風險：綠條越長越危險（持有一年 · 賠逾 30% 的比例）</div>
+    <div class="hbars">
+      <div class="hbar"><span class="hl">🏷️ 高ROE·高利益率</span><div class="htrack"><div class="hfill down" style="width:98%"></div></div><span class="hv dn">9.8%</span></div>
+      <div class="hbar"><span class="hl">🔍 潛力黑馬</span><div class="htrack"><div class="hfill down" style="width:26%"></div></div><span class="hv dn">2.6%</span></div>
+      <div class="hbar"><span class="hl">兩者皆非</span><div class="htrack"><div class="hfill down" style="width:41%"></div></div><span class="hv dn">4.1%</span></div>
+    </div>
+    <div class="cap">另一個更極端的風險「腰斬（賠逾 50%）」比例：高ROE·高利益率 <strong>2.0%</strong>、潛力黑馬 <strong>0.1%</strong>、兩者皆非 0.5%。看起來最「優質」的那組，大賠與腰斬機率反而都最高。</div>
+  </div>
+
+  <div class="card rail up">
+    <h3>🏷️ 「高 ROE·高利益率」標記 — 不是誇獎，是提醒</h3>
+    <p style="margin-bottom:0">過去這叫「⭐頂級優質」還會被自動置頂。但回測發現，同時符合這兩個條件的便宜股，是<strong>表現最差的一群</strong>：持有一年中位僅 +3.5%（低於便宜全體 +7.3%），大賠與腰斬機率卻都最高。所以它已<strong>改成中性灰色的事實標記、不再置頂</strong>——看到它，要多一分警覺，而不是安心。</p>
+  </div>
+
+  <div class="card rail">
+    <h3>🔍 「潛力黑馬」標記 — 目前唯一相對安穩的一群</h3>
+    <p style="margin-bottom:0">指利益率穩定、但 ROE 還沒衝到最高的公司。它的報酬跟便宜全體差不多（+7.25%），但<strong>大賠機率最低</strong>（賠逾 30% 僅 2.6%、腰斬僅 0.1%），且贏過 0050 的比例是所有組別裡最高的（49.2%）。是「進可攻、退可守」的一群。</p>
+  </div>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>徽章分組（便宜股 · 1 年）</th><th>中位報酬</th><th>贏 0050</th><th>賠逾 30%</th><th>腰斬</th></tr></thead>
+      <tbody>
+        <tr class="caut"><td>🏷️ 高 ROE·高利益率</td><td class="up">+3.49%</td><td>42.2%</td><td class="dn">9.8%</td><td class="dn">2.0%</td></tr>
+        <tr class="pick"><td>🔍 潛力黑馬</td><td class="up">+7.25%</td><td>49.2%</td><td>2.6%</td><td>0.1%</td></tr>
+        <tr><td>兩者皆非</td><td class="up">+10.23%</td><td>47.5%</td><td>4.1%</td><td>0.5%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Q6 -->
+  <h2 id="q6"><span class="qn">Q6</span>有沒有更強的組合？便宜 ＋ 高股息</h2>
+  <p class="lead">最後一個好消息：把「便宜」和「高股息（高殖利率）」疊在一起，是目前所有測試裡最亮眼的組合。</p>
+
+  <div class="numrow">
+    <div class="u"><div class="bignum up">+10.9%</div><div class="lbl">便宜＋高殖利率<br>持有 1 年 · 中位</div></div>
+    <div class="u"><div class="bignum up">+32.9%</div><div class="lbl">便宜＋高殖利率<br>持有 2 年 · 中位</div></div>
+    <div class="u"><div class="bignum a">50%↑</div><div class="lbl">持有 2 年<br>贏過 0050 比例</div></div>
+  </div>
+
+  <div class="callout win">
+    <span class="ico">🏆</span>
+    <div><strong>這是唯一一個「打敗 0050 比例站上五成」的常見組合。</strong>高股息本身就是「公司真的有賺錢、拿得出現金」的體質證明，剛好補上單看「便宜」的盲點。搭在一起，報酬更高、正報酬機率也更高（持有 2 年約 79% 會賺）。</div>
+  </div>
+
+  <div class="chart">
+    <div class="ct">持有兩年 · 中位報酬比一比</div>
+    <div class="hbars">
+      <div class="hbar"><span class="hl">全市場亂買</span><div class="htrack"><div class="hfill mut" style="width:43%"></div></div><span class="hv up">+14.3%</span></div>
+      <div class="hbar"><span class="hl">只看便宜</span><div class="htrack"><div class="hfill mut" style="width:68%"></div></div><span class="hv up">+22.4%</span></div>
+      <div class="hbar"><span class="hl">只看高股息</span><div class="htrack"><div class="hfill mut" style="width:77%"></div></div><span class="hv up">+25.4%</span></div>
+      <div class="hbar"><span class="hl">便宜＋高股息</span><div class="htrack"><div class="hfill" style="width:100%"></div></div><span class="hv up">+32.9%</span></div>
+    </div>
+  </div>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>策略（持有 2 年）</th><th>中位報酬</th><th>會賺機率</th></tr></thead>
+      <tbody>
+        <tr><td>全市場亂買</td><td class="up">+14.29%</td><td>63.6%</td></tr>
+        <tr><td>只看 P/E 便宜</td><td class="up">+22.42%</td><td>70.8%</td></tr>
+        <tr><td>只看 高殖利率</td><td class="up">+25.39%</td><td>76.5%</td></tr>
+        <tr class="pick"><td>P/E 便宜 ＋ 高殖利率</td><td class="up">+32.89%</td><td>79.3%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 總結 -->
+  <h2>一句話總結</h2>
+  <div class="card rail">
+    <p style="font-size:16.5px; margin:0; line-height:1.8">四把「便宜尺」都是不錯的<strong>篩子</strong>——能幫你避開一部分地雷、在電子成長股裡挑出被錯殺的便宜貨，其中 <strong>P/FCF（自由現金流）體質最誠實、表現最亮眼</strong>；但它們<strong>都不是</strong>保證跑贏大盤的聖杯。用對產業（電子、半導體）、搭上高股息、對「帳面太漂亮」的循環股保持警覺，它們就能幫上忙。想省事又穩，直接買 0050 也完全合理。</p>
+  </div>
+
+  <div class="disc">
+    <strong>⚠️ 重要聲明：</strong>本報告所有數字均來自歷史回測，<strong>過去績效不代表未來表現</strong>。「中位報酬」是統計上的一般情況，不保證任何單一個股的結果。四把尺都已完成產業別回測，但樣本外檢驗顯示：<strong>除了 P/S，其餘三把尺的「產業排名」不會延續到未來</strong>，僅供了解過去、不宜當成選股依據。本系統為估值查詢與研究工具，非投資建議，投資前請自行評估風險。
+  </div>
+
+  <footer>
+    資料來源：tw-eps-watcher 回測引擎（<code>backtest_valuation.py</code>、<code>backtest_badges.py</code> 等）｜
+    樣本涵蓋全台股約 2,000 檔、近 10 年｜報酬已用交易所官方除權息因子還原（股息計入）｜
+    四模型（P/E／P/B／P/S／P/FCF）均完成全市場總覽＋產業別回測；另做樣本外持續性檢驗（<code>audit_oos_persistence.py</code>），僅 P/S 的產業排名可延續｜
+    產出日期 2026-07-23
+  </footer>
+
+</div>
+</body>
+</html>

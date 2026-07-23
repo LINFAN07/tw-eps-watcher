@@ -34,6 +34,22 @@ export default function BacktestPage() {
         </p>
       </header>
 
+      {/* 白話敘事版入口：/backtest 是技術表格版，這份是圖表＋白話的完整報告 */}
+      <a
+        href="/backtest-report.html"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="group flex items-center justify-between gap-4 mb-10 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 transition-colors hover:bg-blue-100"
+      >
+        <div>
+          <div className="font-semibold text-blue-900">📊 白話完整版：便宜訊號到底能不能賺？</div>
+          <div className="text-sm text-blue-700/80 mt-0.5">
+            四模型＋圖表，金融小白也看得懂的敘事版報告（另開新分頁）
+          </div>
+        </div>
+        <span className="shrink-0 text-blue-600 transition-transform group-hover:translate-x-0.5">→</span>
+      </a>
+
       {/* 三個結論 */}
       <section className="grid gap-3 md:grid-cols-3 mb-10">
         <Finding
