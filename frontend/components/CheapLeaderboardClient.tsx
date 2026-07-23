@@ -94,6 +94,17 @@ const LOSS_TIERS   = [{ min: 0, cls: 'text-red-500' }, { min: -Infinity, cls: 't
 const ROE_TIERS    = [{ min: 15, cls: 'text-green-600' }, { min: 8, cls: 'text-amber-500' }, ...LOSS_TIERS]
 const MARGIN_TIERS = [{ min: 20, cls: 'text-green-600' }, { min: 10, cls: 'text-amber-500' }, ...LOSS_TIERS]
 
+// 可排序欄位。取值回傳 null 者（如缺 ROE、非高息榜無殖利率）一律沉底，見 displayRows
+type SortKey = 'roe' | 'margin' | 'yield' | 'price' | 'cheap' | 'discount'
+const SORT_ACCESSORS: Record<SortKey, (r: LeaderboardRow & { roe: number | null }) => number | null> = {
+  roe:      r => r.roe,
+  margin:   r => r.operating_margin ?? null,
+  yield:    r => r.dividend_yield ?? null,
+  price:    r => r.current_price,
+  cheap:    r => r.cheap_price,
+  discount: r => (r.cheap_price - r.current_price) / r.cheap_price,
+}
+
 export default function CheapLeaderboardClient(
   { data, yieldThreshold }: { data: LeaderboardData; yieldThreshold: number },
 ) {
@@ -117,8 +128,17 @@ export default function CheapLeaderboardClient(
     // 否則按上一頁會變成逐一倒退切過的每個分頁，而不是回到前一個頁面
     window.history.replaceState(null, '', url)
   }
-  const [filterRoe, setFilterRoe]       = useState(true)   // ROE ≥ 15%
-  const [filterMargin, setFilterMargin] = useState(true)   // 利益率 ≥ 10%
+  // 2026-07-23 改為預設關閉。回測（P/E 便宜股、持有 12 個月）證明這兩個品質濾網
+  // 都在降報酬、增風險——把它們套上「便宜」榜，等於篩掉表現更好也更安全的一半：
+  //   ROE≥15% 那半：報酬中位 5.42%、賠逾30% 8.5%；ROE<15% 那半：9.25%、3.1%
+  //   利益率≥10% 那半：4.69%、7.6%；利益率<10% 那半：10.46%、4.1%
+  //   四濾網全開 vs 只留 KY+帶寬：報酬 4.85%→8.46%、賠逾30% 8.8%→5.4%、榜單 24→76 檔
+  // 機制同 CLAUDE.md 的「獲利高峰」：便宜股裡（已排除虧損）ROE／利益率特別高的，
+  // 多是景氣循環股正賺在頂點，EPS 灌水使 P/E 看似最便宜，正是最危險的買點。
+  // 保留開關（想篩的人一鍵開回），但不預設替所有人做這個反效果的判斷。
+  // 已驗證範圍：P/E 便宜榜與其衍生的殖利率榜；其餘榜未單獨測，但機制跨模型相同。
+  const [filterRoe, setFilterRoe]       = useState(false)  // ROE ≥ 15%
+  const [filterMargin, setFilterMargin] = useState(false)  // 利益率 ≥ 10%
   const [excludeKY, setExcludeKY]       = useState(true)   // 排除 KY 股（見 KY_TOOLTIP）
   // 2026-07-22 改為預設啟用。回測（38,274 筆便宜訊號、持有 12 個月）顯示
   // 帶寬五分位 Q1→Q5 的報酬中位數 +10.00%→+3.39%、正報酬率 66.4%→54.9%，
@@ -129,6 +149,15 @@ export default function CheapLeaderboardClient(
   // 帶寬大的絕對報酬差、相對 0050 略好，因為它們較常發生在 0050 也不好的時期。
   // 三個指標中兩個支持排除，此處採信多數（同 lib/bandStability.ts 的立場）。
   const [excludeDiffuse, setExcludeDiffuse] = useState(true)
+
+  // 欄位排序：null＝維持各分頁的預設排序；點同一欄 降序→升序→取消 循環
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null)
+  function toggleSort(key: SortKey) {
+    setSort(prev =>
+      prev?.key !== key     ? { key, dir: 'desc' }
+      : prev.dir === 'desc' ? { key, dir: 'asc' }
+      : null)
+  }
 
   const rows = data[model]
 
@@ -165,13 +194,23 @@ export default function CheapLeaderboardClient(
     : beforeDiffuse
 
   // 共識 Tab：頂級優質（ROE≥15% 且利益率≥10%）置頂，其餘保持原排序
-  const displayRows = model === 'consensus'
+  const defaultRows = model === 'consensus'
     ? [...filtered].sort((a, b) => {
         const score = (r: typeof a) =>
           (r.roe != null && r.roe >= 15 && r.operating_margin != null && r.operating_margin >= 10) ? 1 : 0
         return score(b) - score(a)
       })
     : filtered
+
+  // 使用者點欄位排序時覆蓋預設；null 值一律沉底，不隨升降序浮動到最前面
+  const displayRows = sort
+    ? [...filtered].sort((a, b) => {
+        const va = SORT_ACCESSORS[sort.key](a)
+        const vb = SORT_ACCESSORS[sort.key](b)
+        if (va == null || vb == null) return va == null ? (vb == null ? 0 : 1) : -1
+        return sort.dir === 'asc' ? va - vb : vb - va
+      })
+    : defaultRows
 
   return (
     <>
@@ -246,16 +285,18 @@ export default function CheapLeaderboardClient(
                 <th className="pb-3 pr-4 font-medium">代碼</th>
                 <th className="pb-3 pr-4 font-medium">公司</th>
                 <th className="pb-3 pr-4 font-medium hidden md:table-cell">產業</th>
-                <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">ROE</th>
-                <th className="pb-3 pr-4 font-medium text-right hidden lg:table-cell">利益率</th>
+                <SortHeader label="ROE"    sortKey="roe"    sort={sort} onSort={toggleSort} className="pb-3 pr-4 text-right hidden lg:table-cell" />
+                <SortHeader label="利益率" sortKey="margin" sort={sort} onSort={toggleSort} className="pb-3 pr-4 text-right hidden lg:table-cell" />
                 {model === 'peYield' && (
-                  <th className="pb-3 pr-4 font-medium text-right">殖利率</th>
+                  <SortHeader label="殖利率" sortKey="yield" sort={sort} onSort={toggleSort} className="pb-3 pr-4 text-right" />
                 )}
-                <th className="pb-3 pr-4 font-medium text-right">現價</th>
-                <th className="pb-3 pr-4 font-medium text-right hidden sm:table-cell">
-                  {model === 'consensus' ? '參考便宜價' : '便宜價'}
-                </th>
-                <th className="pb-3 font-medium text-right">折價</th>
+                <SortHeader label="現價" sortKey="price" sort={sort} onSort={toggleSort} className="pb-3 pr-4 text-right" />
+                <SortHeader
+                  label={model === 'consensus' ? '參考便宜價' : '便宜價'}
+                  sortKey="cheap" sort={sort} onSort={toggleSort}
+                  className="pb-3 pr-4 text-right hidden sm:table-cell"
+                />
+                <SortHeader label="折價" sortKey="discount" sort={sort} onSort={toggleSort} className="pb-3 text-right" />
               </tr>
             </thead>
             <tbody>
@@ -435,6 +476,30 @@ function YieldIntro({ threshold }: { threshold: number }) {
         </ul>
       </details>
     </div>
+  )
+}
+
+/** 可排序表頭：顯示排序箭頭（↓降 ↑升），未選中時顯示灰色 ↕ 提示可點擊 */
+function SortHeader({ label, sortKey, sort, onSort, className }: {
+  label: string
+  sortKey: SortKey
+  sort: { key: SortKey; dir: 'asc' | 'desc' } | null
+  onSort: (key: SortKey) => void
+  className?: string
+}) {
+  const active = sort?.key === sortKey
+  return (
+    <th className={className}>
+      <button
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-0.5 font-medium hover:text-gray-700 ${active ? 'text-gray-700' : ''}`}
+      >
+        {label}
+        <span className={active ? '' : 'text-gray-300'}>
+          {active ? (sort!.dir === 'desc' ? '↓' : '↑') : '↕'}
+        </span>
+      </button>
+    </th>
   )
 }
 
