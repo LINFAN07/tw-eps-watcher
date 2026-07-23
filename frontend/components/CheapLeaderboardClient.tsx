@@ -77,6 +77,19 @@ const BAND_TOOLTIP = '估值帶＝(昂貴倍數−便宜倍數)÷合理倍數。
   + '散得很開，「便宜價」只是相對它自己的歷史偏低，未必真的被低估。'
   + '回測顯示帶最寬的 20% 訊號，12 個月報酬中位數僅 +3.4%（最窄組 +10.0%）。'
 
+// 徽章語意校正（2026-07-23 回測，便宜股持有 12 個月，見 scripts/backtest_badges.py）：
+// 「頂級優質」（ROE≥15% 且利益率≥10%）報酬中位僅 3.49%、賠逾30% 9.8%，是便宜股裡
+// 最差最危險的一組——雙指標都衝到頂多半是景氣循環股正賺在高峰。故去掉置頂與正面
+// 色，改中性標記：事實（體質好）照給，不把「經營品質」誤讀成「投資報酬」。
+const TOP_QUALITY_TOOLTIP = 'ROE 與營業利益率都高，是「經營體質」的描述，不是報酬預測。'
+  + '回測顯示：便宜股裡這類「雙高」股歷史報酬中位數反而只有 3.5%（便宜股全體 7.3%），'
+  + '大賠機率也偏高（賠逾 30% 佔 9.8%，全體 6.0%）——多為景氣循環股正賺在高峰，'
+  + '獲利一反轉股價就下修。'
+// 潛力黑馬相反：回測支持保留（見上）。報酬與全體持平但下檔明顯更淺，是唯一低風險組。
+const POTENTIAL_TOOLTIP = '本業獲利穩健（利益率≥10%），但 ROE 尚未衝到高點——'
+  + '本業有賺、獲利卻還沒過熱的區間。回測顯示這類股歷史報酬與便宜股全體相當（約 7.3%），'
+  + '但下檔明顯更淺（賠逾 30% 僅 2.6%，全體 6.0%），是便宜股裡風險最低的一群。'
+
 // 從 TTM EPS 和每股淨值推算 ROE（EPS 為負時回傳負 ROE；淨值為負時分母無意義，回傳 null）
 function calcRoe(row: LeaderboardRow): number | null {
   if (row.ttm_eps != null && row.pb_book_value != null && row.pb_book_value > 0) {
@@ -193,16 +206,11 @@ export default function CheapLeaderboardClient(
     ? beforeDiffuse.filter(r => r.band_level !== 'diffuse')
     : beforeDiffuse
 
-  // 共識 Tab：頂級優質（ROE≥15% 且利益率≥10%）置頂，其餘保持原排序
-  const defaultRows = model === 'consensus'
-    ? [...filtered].sort((a, b) => {
-        const score = (r: typeof a) =>
-          (r.roe != null && r.roe >= 15 && r.operating_margin != null && r.operating_margin >= 10) ? 1 : 0
-        return score(b) - score(a)
-      })
-    : filtered
-
-  // 使用者點欄位排序時覆蓋預設；null 值一律沉底，不隨升降序浮動到最前面
+  // 使用者點欄位排序時覆蓋預設；null 值一律沉底，不隨升降序浮動到最前面。
+  // 未排序時保留各分頁的預設順序（共識榜為 server 端的「共識模型數 → 折價」）。
+  // 2026-07-23 移除原本的「頂級優質置頂」：回測證明便宜股裡 ROE≥15% 且利益率≥10%
+  // 的「雙高」股報酬中位僅 3.49%、賠逾30% 9.8%，是最差也最危險的一組，置頂等於把
+  // 最爛的推到使用者眼前第一個（見 scripts/backtest_badges.py）。
   const displayRows = sort
     ? [...filtered].sort((a, b) => {
         const va = SORT_ACCESSORS[sort.key](a)
@@ -210,7 +218,7 @@ export default function CheapLeaderboardClient(
         if (va == null || vb == null) return va == null ? (vb == null ? 0 : 1) : -1
         return sort.dir === 'asc' ? va - vb : vb - va
       })
-    : defaultRows
+    : filtered
 
   return (
     <>
@@ -353,14 +361,19 @@ export default function CheapLeaderboardClient(
                           ))}
                         </div>
                       )}
+                      {/* 中性標記：ROE／利益率高是事實，但回測證明這類股在便宜榜裡
+                          報酬反而最差（見 TOP_QUALITY_TOOLTIP），故去掉⭐與正面色。 */}
                       {isTopQuality && (
-                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 font-medium leading-tight mt-0.5">
-                          ⭐ 頂級優質
+                        <span
+                          title={TOP_QUALITY_TOOLTIP}
+                          className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-200 leading-tight mt-0.5 cursor-help"
+                        >
+                          高 ROE·高利益率
                         </span>
                       )}
                       {isPotential && (
                         <span
-                          title="本業獲利強勁，但資金效率尚未完全釋放（帳上現金充沛或處於擴產期）。一旦提高配息或產能放量，ROE 有望爆發。屬進階型潛在價值股，需留意等待時間成本。"
+                          title={POTENTIAL_TOOLTIP}
                           className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200 font-medium leading-tight mt-0.5 cursor-help"
                         >
                           🔍 潛力黑馬
