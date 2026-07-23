@@ -18,10 +18,12 @@ badges / roe_filter / margin_filter / filter_compare 四支回測與主回測
 同步就自動隱藏 Q4/Q5，寧可不顯示也不給錯數字。
 
 重跑：`python scripts/export_quality_stats.py`
-快速重匯（不重跑回測、直接用現有 CSV）：加 `--no-run`
+
+刻意「沒有」跳過重跑的選項：直接讀磁碟上現有 CSV 匯出，會在某支 CSV 為舊版時
+產出半新半舊的 lib（2026-07-23 實測 roe_filter.csv 為 par-value 修正前的陳舊版，
+就是這樣被混進來的）。四支一律一起重跑，才是唯一保證同源的路徑。
 """
 
-import argparse
 import json
 import os
 import subprocess
@@ -127,13 +129,7 @@ export const FILTER_COMPARE: QualityRow[] = [
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="匯出品質濾網/徽章回測到前端 lib")
-    ap.add_argument("--no-run", action="store_true",
-                    help="不重跑四支回測，直接用現有 CSV 匯出（僅供快速重匯，正式更新請勿用）")
-    args = ap.parse_args()
-
-    if not args.no_run:
-        run_all()
+    run_all()   # 一律四支一起重跑，這是唯一保證與主回測同源的路徑（見檔頭說明）
 
     base_n, base_med = overall_pe12()
     badges = load("badges.csv")
