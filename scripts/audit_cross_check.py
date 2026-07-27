@@ -24,7 +24,6 @@ import os
 import random
 import sys
 
-import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client
 
