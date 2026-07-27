@@ -27,6 +27,8 @@ import sys
 from dotenv import load_dotenv
 from supabase import create_client
 
+import periodicity   # 期數判定的單一來源，不可在此另寫一套（見 check_ttm_eps）
+
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
@@ -75,12 +77,19 @@ def close(a: float | None, b: float | None) -> bool:
 
 
 def check_ttm_eps(sid: str, v: dict) -> str | None:
-    """ttm_eps 應等於近四季 EPS 相加（興櫃半年報用兩期）"""
+    """
+    ttm_eps 應等於近四季 EPS 相加（半年報公司用兩期）。
+
+    期數一律問 periodicity.report_window()——它只看最近 6 期。
+    這裡原本自己判「全歷史月份是否都落在 6/12」，一筆陳年異常期別就會把整支
+    股票誤判成季報：2026-07-27 實例 6775 穎台科技，14 期裡只有 2020-09-30 一筆
+    例外，稽核便用 4 期相加 -5.61 去比對正確的 2 期值 -4.91，報出假 critical。
+    計算端與稽核端的回看期數必須相同，否則兩邊對同一支股票給出不同答案。
+    """
     rows = _paged("eps_quarterly", "quarter_end_date,eps", sid)
     if len(rows) < 2 or v.get("ttm_eps") is None:
         return None
-    months = {int(r["quarter_end_date"][5:7]) for r in rows}
-    w = 2 if months <= {6, 12} else 4
+    w = periodicity.report_window(r["quarter_end_date"] for r in rows)
     if len(rows) < w:
         return None
     recalc = sum(float(r["eps"]) for r in rows[-w:])
