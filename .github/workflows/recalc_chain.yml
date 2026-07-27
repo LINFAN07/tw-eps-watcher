@@ -82,6 +82,19 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/backtest_yield.py
 
+      # 品質濾網／徽章回測（Q4・Q5），產生 frontend/lib/backtestQualityStats.ts。
+      # 必須放在 backtest_valuation.py 之後：這支內建的一致性把關要求
+      # badges 的「便宜全體」逐位元組等於 overall.csv 的 P/E 便宜 12m，
+      # 順序顛倒就會拿舊的 overall.csv 比對而失敗。
+      # 它自己會用 subprocess 依序跑 roe_filter / margin_filter / badges /
+      # filter_compare 四支，不需要在這裡各列一步。
+      - name: 品質濾網與徽章回測（Q4・Q5）
+        if: ${{ !inputs.skip_backtest }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/export_quality_stats.py
+
       # 回測結果要進版控前端才看得到（backtestStats.ts 由回測腳本產生）。
       # signals.csv 與 universe.csv 已在 .gitignore，不會被帶進來。
       - name: 提交回測結果
@@ -89,7 +102,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add backtest_results/ frontend/lib/backtestStats.ts
+          git add backtest_results/ frontend/lib/backtestStats.ts frontend/lib/backtestQualityStats.ts
           if git diff --staged --quiet; then
             echo "回測結果無變動，不需提交"
           else

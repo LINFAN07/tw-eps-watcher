@@ -47,6 +47,16 @@ NO_SCHEDULE_OK = {
     "patch_yield_valuation.py":       "yield_* 欄位已由 calculate_alt_valuations.py 產生",
     # 被其他腳本內部呼叫，不會出現在 workflow 的 `python xxx.py`
     "download_monthly_revenue.py":    "由 update_fundamentals.py 內部呼叫",
+    "backtest_roe_filter.py":         "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
+    "backtest_margin_filter.py":      "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
+    "backtest_badges.py":             "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
+    "backtest_filter_compare.py":     "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
+    # 一次性研究／檢驗，不維護任何欄位
+    "backtest_quality.py":            "一次性產品決策回測（該不該做合理估值榜），不產出線上資料",
+    # 盲區：這支的結論寫進 lib/backtest.py 的 caveatFor() 是「手寫」的，
+    # 資料再累積兩年後 P/S 的產業排名延續性可能翻掉，而沒有任何機制會提醒重跑。
+    # 若哪天要把延續性判斷自動化，就必須把這支移出白名單、掛進 recalc_chain。
+    "audit_oos_persistence.py":       "一次性樣本外持續性檢驗；結論為手寫的警語判斷，非自動生成欄位",
 }
 # 注意：已經掛在 workflow 上的腳本【不要】列進上面的白名單。
 # 白名單只列「本來就不該有排程」的；若把已排程的也列進去，
