@@ -11,7 +11,8 @@
 邏輯：
   1. 判斷本季財報季正在申報的季別（target_quarter）
   2. 跳過「資料庫已有該季 EPS」的股票——不呼叫 FinMind，直接略過
-  3. 對其餘股票從 FinMind 取得最新 EPS，有新季度就寫入 eps_quarterly
+  3. 對其餘股票從 FinMind 取得最新 EPS，有新季度**或既有季度的值變了**
+     （公司更正申報）就寫入 eps_quarterly
   4. 對有更新的股票呼叫 calculate_valuation，重算歷史 P/E 區間與估值
 
 關於步驟 2：FinMind 免費版每次呼叫需間隔 6.5 秒，全市場 2,300+ 支跑完約 4.2 小時。
@@ -85,6 +86,27 @@ def get_latest_eps_dates() -> dict[str, str]:
     return latest
 
 
+def get_recent_eps(start_date: str) -> dict[tuple[str, str], float]:
+    """
+    查詢視窗內既有的 EPS {(stock_id, 季末日): eps}，用來偵測更正申報。
+
+    只載入視窗內的季度（約 2 季 × 2,400 支），不是整張表。
+    """
+    existing, offset = {}, 0
+    while True:
+        resp = (supabase.table("eps_quarterly")
+                .select("stock_id, quarter_end_date, eps")
+                .gte("quarter_end_date", start_date)
+                .order("stock_id").order("quarter_end_date")
+                .range(offset, offset + 999).execute())
+        existing.update({(r["stock_id"], r["quarter_end_date"]): float(r["eps"])
+                         for r in resp.data})
+        if len(resp.data) < 1000:
+            break
+        offset += 1000
+    return existing
+
+
 def target_quarter(today: date) -> str | None:
     """
     目前財報季正在申報的季別（季末日）。
@@ -107,6 +129,7 @@ def run():
 
     all_ids      = get_all_stock_ids()
     latest_dates = get_latest_eps_dates()
+    existing_eps = get_recent_eps(start_date)
 
     # 已有本季 EPS 的股票不必再問 FinMind，直接跳過（省下 6.5 秒／支）
     target = target_quarter(today)
@@ -147,9 +170,30 @@ def run():
         db_latest = latest_dates.get(sid, "1900-01-01")
         truly_new = [r for r in new_eps if r["quarter_end_date"] > db_latest]
 
-        if truly_new:
+        # 更正申報：日期不是新的，但值變了。這一趟 FinMind 呼叫本來就回傳近 6 個月
+        # 的多個季度，過去只在「有新季度」時才寫入，等於白拿了資料卻丟掉——
+        # 公司事後更正財報，資料庫就永久停在第一版數字，且沒有任何機制會修正它。
+        # 2026-07-27 事故：1591 駿吉-KY 的 2026Q1 EPS 停在 -0.08，官方已更正為 -1.18
+        # （用官方淨利 -44,821 千元 ÷ 38,048 千股 = -1.178 驗算，官方為真），
+        # 是 audit_external.py 逐筆比對交易所才發現的。
+        # 偵測不到的部分要說清楚：本季已入庫而被上面跳過的股票這一輪不會呼叫，
+        # 也就驗不到；查詢視窗（近 180 天）以外的舊季度同樣看不到。
+        # 取不到既有值時以自身為預設 → 差為 0，不會誤判成更正
+        restated = [r for r in new_eps
+                    if r not in truly_new
+                    and abs(existing_eps.get((sid, r["quarter_end_date"]), r["eps"])
+                            - r["eps"]) > 0.005]
+
+        if truly_new or restated:
             supabase.table("eps_quarterly").upsert(new_eps).execute()
-            print(f"  [{idx}/{total}] {sid} -> 新季度 {[r['quarter_end_date'] for r in truly_new]}，EPS={[r['eps'] for r in truly_new]}")
+            parts = []
+            if truly_new:
+                parts.append(f"新季度 {[r['quarter_end_date'] for r in truly_new]}，"
+                             f"EPS={[r['eps'] for r in truly_new]}")
+            for r in restated:
+                old = existing_eps[(sid, r["quarter_end_date"])]
+                parts.append(f"更正申報 {r['quarter_end_date']} {old}→{r['eps']}")
+            print(f"  [{idx}/{total}] {sid} -> {'；'.join(parts)}")
             updated_ids.append(sid)
 
         time.sleep(CALL_INTERVAL)

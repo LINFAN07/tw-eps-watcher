@@ -9,10 +9,14 @@ validate_valuations.py — 估值結果驗證（內部一致性 + 跨來源比�
   5. ttm_eps > 0.5 但 cheap_price 為 null（矛盾空值）
   6. current_price > 0
 
-## B. 跨來源比對（隨機抽樣 10 支，與 FinMind 對照）
+## B. 跨來源比對（隨機抽樣 10 支 + 錨點股）
   7. 零價格（0 不是價格，是「無成交」偽裝成數字）
-  8. 幽靈交易日（我們有、FinMind 沒有 → 可能寫入了休市日）
+  8. 幽靈交易日（我們有、對照來源沒有 → 可能寫入了休市日）
   9. 同日價格不符（→ 日期位移或抓錯來源）
+
+上市／上櫃以 FinMind 逐日比對；**興櫃另走一套判準**——它沒有官方收盤價，
+與 FinMind 的差異只是同一個即時快照的不同取樣時點，逐角比對必然週期性誤報。
+改以交易所公告的當日最高／最低區間判定，詳見 ESB_LIST_URL 上方的說明。
 
 **為何需要 B**：A 只能驗「內部自洽」。資料是舊的、日期整批位移、單位錯了——
 這些錯誤的數字彼此完全自洽，A 的規則會全部通過。
@@ -29,6 +33,7 @@ import sys
 import time
 import random
 import requests
+import urllib3
 from datetime import date, timedelta
 from dotenv import load_dotenv
 from supabase import create_client
@@ -75,6 +80,24 @@ ANCHOR_STOCKS = [
 ]
 # 收盤價比對容許 1 分錢誤差（雙方四捨五入位數可能不同）
 PRICE_EPSILON     = 0.011
+
+# 興櫃改用「官方當日最高／最低區間」判定，不與 FinMind 逐角比對。
+#
+# 興櫃沒有官方收盤價：交易所歷史行情只公布最高／最低／均價，唯一的最後成交價
+# 是 tpex_esb_latest_statistics 的【即時快照】，不是定版數字。FinMind 的興櫃資料
+# 取自同一個快照（實證：其 open 等於交易所前一日均價、max/min 與官方逐筆相符），
+# 差別只在取樣時點。
+# 2026-07-27 抽樣 2026-07-23 的 8 支興櫃，3 支與 FinMind 不符且方向雙向
+# （4553 我們 17.2／FinMind 16.95、7898 我們 393.5／FinMind 395.5），
+# 每一筆都落在官方當日區間內。我們的快照取自台北 15:56，已在興櫃收盤 15:00 之後，
+# 反而是較定版的一方。拿 FinMind 當基準只會週期性冒假 critical——
+# 而誤報久了就會讓人連真警報一起忽略。
+ESB_LIST_URL      = "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics"
+ESB_HISTORY_URL   = "https://www.tpex.org.tw/www/zh-tw/emerging/historical"
+TPEX_HEADERS      = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.tpex.org.tw/"}
+# TPEx 憑證缺 Subject Key Identifier，新版 OpenSSL 會拒絕；比照 audit_external.py
+# 對 TPEx 端點關閉驗證（同一個既有取捨，不在這裡另闢一套）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def fetch_all_stock_ids() -> list[str]:
@@ -241,9 +264,26 @@ def our_prices(stock_id: str, start: str) -> dict[str, float]:
     return {r["date"]: float(r["close_price"]) for r in resp.data}
 
 
+def zero_price_issues(stock_id: str, ours: dict[str, float]) -> list[tuple]:
+    """零價格：0 是「無成交」不是價格（2026-07-17 曾有 10.3 萬筆）"""
+    return [(stock_id, "critical", f"{d} 收盤價為 {p}（0 不是價格，應不寫入）")
+            for d, p in sorted(ours.items()) if p <= 0]
+
+
+def missing_day_issues(stock_id: str, ours: dict, theirs: dict,
+                       latest_ok: str) -> list[tuple]:
+    """對照來源有、我們沒有的交易日（可能是下載遺漏，非致命）"""
+    missing = [d for d in sorted(set(theirs) - set(ours)) if d <= latest_ok]
+    if not missing:
+        return []
+    return [(stock_id, "warning",
+             f"缺少 {len(missing)} 個交易日的股價：{', '.join(missing[:3])}"
+             + ("…" if len(missing) > 3 else ""))]
+
+
 def check_price_source(stock_id: str, start: str, latest_ok: str) -> list[tuple]:
     """
-    以 FinMind 為對照，驗證資料庫股價的正確性。
+    以 FinMind 為對照，驗證資料庫股價的正確性（上市／上櫃；興櫃見 check_price_esb）。
 
     latest_ok：比對截止日。最新一兩天可能只是排程尚未執行或來源尚未發布，
     不應視為缺漏，故排除。
@@ -253,12 +293,7 @@ def check_price_source(stock_id: str, start: str, latest_ok: str) -> list[tuple]
     if not theirs:
         return []   # 對照組取不到就無從比對，不誤報
 
-    issues = []
-
-    # 零價格：0 是「無成交」不是價格（2026-07-17 曾有 10.3 萬筆）
-    for d, p in ours.items():
-        if p <= 0:
-            issues.append((stock_id, "critical", f"{d} 收盤價為 {p}（0 不是價格，應不寫入）"))
+    issues = zero_price_issues(stock_id, ours)
 
     # 幽靈交易日：我們有、FinMind 沒有 → 可能把休市日寫成交易日
     for d in sorted(set(ours) - set(theirs)):
@@ -272,13 +307,72 @@ def check_price_source(stock_id: str, start: str, latest_ok: str) -> list[tuple]
             issues.append((stock_id, "critical",
                            f"{d} 收盤價不符：我們 {ours[d]} vs FinMind {theirs[d]}"))
 
-    # 缺漏：FinMind 有、我們沒有（可能是下載遺漏，非致命）
-    missing = [d for d in sorted(set(theirs) - set(ours)) if d <= latest_ok]
-    if missing:
-        issues.append((stock_id, "warning",
-                       f"缺少 {len(missing)} 個交易日的股價：{', '.join(missing[:3])}"
-                       + ("…" if len(missing) > 3 else "")))
-    return issues
+    return issues + missing_day_issues(stock_id, ours, theirs, latest_ok)
+
+
+def esb_codes() -> set[str]:
+    """興櫃股票代碼集合（整批端點，一次呼叫）"""
+    resp = requests.get(ESB_LIST_URL, timeout=30, verify=False)
+    resp.raise_for_status()
+    return {str(r.get("SecuritiesCompanyCode", "")).strip() for r in resp.json()}
+
+
+def esb_ranges(stock_id: str, start: str) -> dict[str, tuple[float, float]]:
+    """
+    興櫃官方歷史行情 {日期: (最低, 最高)}，只含當日確實有成交的交易日。
+
+    端點一次回傳整月，故依比對視窗跨越的月份逐月查詢。
+    抓取失敗直接讓例外往上拋——「來源故障」不可偽裝成「該日沒有資料」。
+    """
+    out: dict[str, tuple[float, float]] = {}
+    y, m = int(start[:4]), int(start[5:7])
+    today = date.today()
+    while (y, m) <= (today.year, today.month):
+        resp = requests.get(ESB_HISTORY_URL, headers=TPEX_HEADERS, timeout=30, verify=False,
+                            params={"code": stock_id, "date": f"{y}/{m:02d}/01",
+                                    "id": "", "response": "json"})
+        resp.raise_for_status()
+        tables = resp.json().get("tables") or [{}]
+        for roc, volume, _amount, high, low, *_ in tables[0].get("data") or []:
+            if not int(volume.replace(",", "")):
+                continue        # 當日無成交＝沒有價格，不是缺漏
+            yy, mm, dd = roc.split("/")          # 民國年一律 +1911（見 CLAUDE.md）
+            iso = f"{int(yy) + 1911}-{mm}-{dd}"
+            if iso >= start:
+                out[iso] = (float(low), float(high))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def check_price_esb(stock_id: str, start: str, latest_ok: str) -> list[tuple]:
+    """
+    興櫃：以交易所公告的當日最高／最低區間驗證收盤價。
+
+    盲區（務必知道）：區間內的錯誤抓不到——例如把當日某個中間成交價
+    或加權均價存成收盤價，都會通過。這道防線只保證「不可能超出當日成交範圍」，
+    以及交易日的有無。興櫃本來就沒有唯一正解的收盤價，能驗的僅止於此；
+    「不得以另一個指標頂替」要靠 daily_price_update.fetch_esb_prices 的
+    只取 LatestPrice 來守，不是靠這裡。
+    """
+    ours   = our_prices(stock_id, start)
+    theirs = esb_ranges(stock_id, start)
+    if not theirs:
+        return []   # 對照組取不到就無從比對，不誤報
+
+    issues = zero_price_issues(stock_id, ours)
+    for d, p in sorted(ours.items()):
+        if p <= 0:
+            continue                     # 已由 zero_price_issues 記錄
+        if d not in theirs:
+            if d <= latest_ok:           # 幽靈交易日
+                issues.append((stock_id, "critical",
+                               f"{d} 我們有股價 {p}，但交易所該日無成交紀錄"))
+        elif not theirs[d][0] - PRICE_EPSILON <= p <= theirs[d][1] + PRICE_EPSILON:
+            issues.append((stock_id, "critical",
+                           f"{d} 收盤價 {p} 超出交易所公告區間 "
+                           f"{theirs[d][0]}–{theirs[d][1]}"))
+
+    return issues + missing_day_issues(stock_id, ours, theirs, latest_ok)
 
 
 def run_cross_source_check(all_ids: list[str]) -> list[tuple]:
@@ -291,17 +385,23 @@ def run_cross_source_check(all_ids: list[str]) -> list[tuple]:
     # 最近 2 天不比對：排程可能尚未執行，或交易所尚未發布
     latest_ok = (date.today() - timedelta(days=2)).strftime("%Y-%m-%d")
 
-    print(f"\n=== 跨來源比對（與 FinMind 對照 {len(sample)} 支，{start} 起）===")
-    print(f"預估耗時約 {len(sample) * CALL_INTERVAL / 60:.1f} 分鐘\n")
+    esb        = esb_codes()
+    n_finmind  = sum(s not in esb for s in sample)
+
+    print(f"\n=== 跨來源比對（{len(sample)} 支，{start} 起）===")
+    print(f"  上市／上櫃 {n_finmind} 支與 FinMind 逐日比對，"
+          f"興櫃 {len(sample) - n_finmind} 支改用交易所區間判準")
+    print(f"預估耗時約 {n_finmind * CALL_INTERVAL / 60:.1f} 分鐘\n")
 
     issues = []
     for i, sid in enumerate(sample, 1):
-        found = check_price_source(sid, start, latest_ok)
-        mark  = "OK" if not found else f"{len(found)} 個問題"
-        print(f"  [{i}/{len(sample)}] {sid}: {mark}")
+        is_esb = sid in esb
+        found  = (check_price_esb if is_esb else check_price_source)(sid, start, latest_ok)
+        mark   = "OK" if not found else f"{len(found)} 個問題"
+        print(f"  [{i}/{len(sample)}] {sid}{'（興櫃）' if is_esb else ''}: {mark}")
         issues.extend(found)
-        if i < len(sample):
-            time.sleep(CALL_INTERVAL)
+        if not is_esb and i < len(sample):
+            time.sleep(CALL_INTERVAL)   # 只有 FinMind 需要節流，交易所端點不必
     return issues
 
 
