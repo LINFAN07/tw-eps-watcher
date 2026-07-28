@@ -192,10 +192,17 @@ def validate(row: dict) -> list[tuple]:
     for col, lo, hi in [("cheap_pe", 3, 200), ("fair_pe", 3, 200), ("expensive_pe", 3, 200)]:
         issues += check_multiplier_range(sid, col, row.get(col), lo, hi)
 
-    # ttm_eps 有值但估值結果為 null（矛盾空值）
+    # 矛盾空值：P/E 帶算得出來（模型成立）且 TTM EPS 為正，就不該沒有目標價。
+    #
+    # cheap_pe 這個條件不可省。cheap_pe 為 null 代表 P/E 樣本不足、模型本來就
+    # 不存在，那不是矛盾而是正常狀態——2026-07-28 起 calculate_valuation 對這種
+    # 股票會把模型產物一律清成 null、只保留 ttm_eps 這個事實
+    # （見 facts_only_result）。少了這個條件，全庫 56 列合法狀態會每週報 warning，
+    # 而週期性誤報最後只會讓人連真警報一起忽略。
     ttm = row.get("ttm_eps")
-    if ttm and ttm > 0.5 and cheap_p is None:
-        issues.append((sid, "warning", f"ttm_eps={ttm} > 0.5 但 cheap_price 為 null"))
+    if ttm and ttm > 0.5 and row.get("cheap_pe") is not None and cheap_p is None:
+        issues.append((sid, "warning",
+                       f"ttm_eps={ttm} > 0.5 且有 P/E 帶，但 cheap_price 為 null"))
 
     # --- P/B ---
     issues += check_price_order(sid, "P/B",

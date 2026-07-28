@@ -287,15 +287,60 @@ def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
     return normalized_ttm, warning
 
 
+def facts_only_result(stock_id: str, eps_df: pd.DataFrame,
+                      price_df: pd.DataFrame) -> dict | None:
+    """
+    P/E 模型建不起來時要寫回的那一列：模型產物一律 null，可獨立計算的事實照常更新。
+
+    為什麼不是「只清目標價」：清一半會讓上一次成功計算的倍數與 EPS 永久殘留，
+    且再也沒有機制修正它（資料誠信原則第 4 條）。2026-07-27 全庫有 59 列如此，
+    3717 聯嘉投控的 P/E 樣本數是 0，卻存著 cheap_pe 15.55——那個數字已經
+    無從追溯是哪一次算的，畫面上照樣顯示。
+
+    為什麼不是「整列清空」：ttm_eps 是公司事實（近四季獲利），與 P/E 樣本
+    夠不夠無關，前端還拿它算 ROE。連它一起清掉會讓 ROE 跟著消失。
+
+    期數守衛不可省：期數不足時 detect_nonrecurring 的 tail(w) 會把 3 季當成
+    4 季相加，寫進 ttm_eps 就是「以另一個指標頂替」。寧可留 null。
+    """
+    if eps_df.empty:
+        return None                      # 連事實都沒有，交給 run() 整列清除
+
+    w = _eps_window(eps_df)
+    if len(eps_df) >= w:
+        ttm_eps, warning = detect_nonrecurring(eps_df)
+    else:
+        ttm_eps, warning = None, None
+    normalized_eps = compute_normalized_eps(eps_df)
+
+    result = {
+        "stock_id":        stock_id,
+        "ttm_eps":         round(ttm_eps, 2) if ttm_eps is not None else None,
+        "normalized_eps":  round(normalized_eps, 2) if normalized_eps is not None else None,
+        # 模型產物：建不起來就是沒有，不留舊值
+        "cheap_pe":        None, "fair_pe":        None, "expensive_pe":    None,
+        "cheap_price":     None, "fair_price":     None, "expensive_price": None,
+        "status":          "無法計算",
+        # 只留 detect_nonrecurring 的一次性收益警告（那是 EPS 序列的事實）；
+        # 長期偏低／獲利高峰／遠低於常態那三種是 P/E 模型的註解，此處沒有模型
+        "warning":         warning,
+    }
+    if not price_df.empty:
+        latest = price_df.iloc[-1]
+        result["current_price"] = round(float(latest["close_price"]), 2)
+        result["price_date"]    = latest["date"].strftime("%Y-%m-%d")
+    return result
+
+
 def calculate_valuation(stock_id: str) -> dict | None:
     eps_df   = fetch_eps(stock_id)
     price_df = fetch_prices(stock_id)
     if eps_df.empty or price_df.empty:
-        return None
+        return facts_only_result(stock_id, eps_df, price_df)
 
     series = build_pe_series(eps_df, price_df, share_factors(stock_id))
     if len(series) < MIN_PE_SAMPLES:
-        return None
+        return facts_only_result(stock_id, eps_df, price_df)
 
     cheap_pe, fair_pe, expensive_pe = (
         series["pe"].quantile(p / 100) for p in (PE_CHEAP, PE_FAIR, PE_EXPENSIVE)
@@ -408,10 +453,14 @@ def run(stock_ids: list[str] | None = None):
                 print(f"  [{idx}/{total}] {stock_id} -> 寫入錯誤: {e}")
                 skipped += 1
         else:
-            # 估值失效（長期虧損、資料不足等）：清除既有目標價。
+            # 連 EPS 都沒有：整個 P/E 區塊清空。
             # 若僅跳過，資料庫會永久殘留上次算出的舊值，且不再有任何機制修正。
+            # 只清目標價也不行——倍數與 ttm_eps 同樣是上次的產物，留著就是髒資料
+            # （facts_only_result 的說明有實例）。
             try:
                 supabase.table("valuations").update({
+                    "ttm_eps": None, "normalized_eps": None, "warning": None,
+                    "cheap_pe": None, "fair_pe": None, "expensive_pe": None,
                     "cheap_price": None, "fair_price": None, "expensive_price": None,
                     "status": "無法計算",
                 }).eq("stock_id", stock_id).execute()
