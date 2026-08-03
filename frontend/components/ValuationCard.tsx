@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { isPeUnreliable } from '@/lib/peReliability'
+import { adjustmentNotice } from '@/lib/adjustmentQuality'
 import { getTrackRecord, type Tone } from '@/lib/backtest'
 import { getBandStability, type BandLevel } from '@/lib/bandStability'
 
@@ -30,6 +31,8 @@ interface Valuation {
   warning?: string | null
   nonop_warning?: string | null
   capital_change_warning?: string | null
+  /** 除權息還原中未取得官方因子的次數：曝險註記，不影響推薦（見 lib/adjustmentQuality.ts）*/
+  unofficial_adjustments?: number | null
   updated_at: string
   price_date?: string | null
   pb_book_value?: number | null
@@ -284,6 +287,9 @@ export default function ValuationCard({
       ? getBandStability(v.pb_cheap_pb, v.pb_fair_pb, v.pb_expensive_pb, 'pb')
       : null
 
+  // 還原資料來源註記（四個模型的歷史倍數都用還原價，故不分模型）
+  const adjNotice = adjustmentNotice(v)
+
   const prevTTM = prevYearQuarters.length === 4
     ? prevYearQuarters.reduce((s, q) => s + q.eps, 0)
     : null
@@ -312,6 +318,14 @@ export default function ValuationCard({
         <div className="flex gap-2 items-start bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 mb-4 text-sm text-sky-800">
           <span className="mt-0.5 shrink-0">🔀</span>
           <span>{v.capital_change_warning}</span>
+        </div>
+      )}
+      {/* 還原資料來源註記（任何模型皆顯示，四個模型的歷史倍數都用還原價）。
+          刻意用灰階而非警告色：這是資料來源的說明，不是「這支有問題」的斷言。*/}
+      {adjNotice && (
+        <div className="flex gap-2 items-start bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4 text-sm text-gray-600">
+          <span className="mt-0.5 shrink-0">📎</span>
+          <span>{adjNotice}</span>
         </div>
       )}
 

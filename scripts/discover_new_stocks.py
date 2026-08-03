@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, os.path.dirname(__file__))
-from finmind_client import fetch  # noqa: E402
+from finmind_client import fetch, roster_market  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -50,7 +50,7 @@ def fetch_roster() -> dict[str, dict]:
         if sid.isdigit() and len(sid) == 4 and sid not in roster:
             roster[sid] = {"stock_id": sid,
                            "name": item.get("stock_name", ""),
-                           "market": item.get("market_category", "未知")}
+                           "market": roster_market(item)}
     return roster
 
 

@@ -6,6 +6,7 @@ import {
   getYieldTrackRecord, getYieldOverall, YIELD_HORIZON, YIELD_RANK_GROUP, YIELD_CAVEATS,
 } from '@/lib/yieldBacktest'
 import type { BandLevel } from '@/lib/bandStability'
+import { adjustmentNotice } from '@/lib/adjustmentQuality'
 
 export interface LeaderboardRow {
   stock_id: string
@@ -25,6 +26,8 @@ export interface LeaderboardRow {
   band_level?: BandLevel | null
   /** 當下現金殖利率（%）；僅「便宜×高殖利率」榜有值 */
   dividend_yield?: number | null
+  /** 除權息還原未取得官方因子的次數：純標示，不影響排名（見 lib/adjustmentQuality.ts）*/
+  unofficial_adjustments?: number | null
   stocks: { name: string; industry: string; market: string } | null
   models?: string[]  // 多模型共識標籤，如 ['P/E', 'P/B', 'P/FCF']
 }
@@ -328,6 +331,8 @@ export default function CheapLeaderboardClient(
                   : model === 'peYield'
                   ? getYieldTrackRecord(r.stocks?.industry)
                   : getTrackRecord(model, r.stocks?.industry)
+                // 還原無官方背書的曝險註記（null 即未達提示門檻）
+                const adjNotice = adjustmentNotice(r)
                 // 把來源模型帶進個股頁，估值卡才會預設顯示使用者剛才在看的那個。
                 // 否則會出現「P/B 榜說便宜，點進去只看到 P/E」的矛盾。
                 // 共識榜是多模型投票，沒有單一來源可帶。
@@ -395,6 +400,17 @@ export default function CheapLeaderboardClient(
                           className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-200 leading-tight mt-0.5 cursor-help"
                         >
                           📉 同業歷史 {trap.excess.toFixed(1)}pp
+                        </span>
+                      )}
+                      {/* 還原無官方背書：中性灰標。這個榜單正是曝險最會誤導人的地方——
+                          未還原的資本事件讓目標價虛高，方向固定是「看起來比實際便宜」，
+                          受影響的股票會系統性往榜首跑。但它是曝險不是錯誤，故只標不篩。 */}
+                      {adjNotice && (
+                        <span
+                          title={adjNotice}
+                          className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-200 leading-tight mt-0.5 cursor-help"
+                        >
+                          📎 還原自算 {r.unofficial_adjustments} 次
                         </span>
                       )}
                     </td>

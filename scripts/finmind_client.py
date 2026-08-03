@@ -28,6 +28,18 @@ import requests
 
 FINMIND_API = "https://api.finmindtrade.com/api/v4/data"
 
+# TaiwanStockInfo 的市場別欄位叫 `type`，值為 twse / tpex / emerging。
+# 早期程式碼取的 `market_category` 在這個資料集裡並不存在，
+# fallback 讓 stocks.market 全表寫成「未知」而無人察覺（2026-08-03 發現）。
+# 對照到 stocks.market 的正式值；此處只供「新股當日」使用，
+# 隔日 daily_price_update.update_market() 會以交易所清單為準覆寫。
+MARKET_BY_TYPE = {"twse": "TWSE", "tpex": "TPEx", "emerging": "Emerging"}
+
+
+def roster_market(item: dict) -> str:
+    """從 TaiwanStockInfo 的一列取出市場別；無法辨識時回「未知」而非猜測"""
+    return MARKET_BY_TYPE.get(str(item.get("type", "")).strip().lower(), "未知")
+
 
 class FinMindError(Exception):
     """FinMind 抓取失敗（與「無資料」不同，呼叫端必須讓工作失敗）"""

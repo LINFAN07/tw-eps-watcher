@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 import pandas as pd
 import numpy as np
-from price_adjust import back_adjust   # 除權息即時還原（不儲存，見 price_adjust.py）
+from price_adjust import back_adjust, unofficial_adjustments   # 除權息即時還原（不儲存，見 price_adjust.py）
 from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
 import ex_factors                      # 除權息還原因子（整表快取，避免逐股查詢）
 
@@ -90,10 +90,13 @@ def fetch_prices(stock_id: str) -> pd.DataFrame:
     # adj_price：除權息即時還原（不儲存），供歷史 P/E 分布使用，避免除息機械性
     # 下跌被當成估值變化。ISO 日期字串字典序即時間序，可直接餵 back_adjust。
     # 現價仍取原始 close_price（見 calculate_valuation 的 current_price）。
-    df["adj_price"] = back_adjust(df["date"].astype(str).tolist(),
-                                  df["close_price"].tolist(),
-                                  fetch_dividends(stock_id),
-                                  ex_factors.for_stock(supabase, stock_id))
+    dates, closes = df["date"].astype(str).tolist(), df["close_price"].tolist()
+    ex_list  = fetch_dividends(stock_id)
+    official = ex_factors.for_stock(supabase, stock_id)
+    df["adj_price"] = back_adjust(dates, closes, ex_list, official)
+    # 還原的官方背書程度：與 adj_price 同源同時算，不必再讀一次 dividends 與價格。
+    # 掛在 attrs 而非欄位——它是整支股票的屬性，不是逐日的值。
+    df.attrs["unofficial_adjustments"] = unofficial_adjustments(dates, closes, ex_list, official)
     df["date"] = pd.to_datetime(df["date"])
     return df
 
@@ -329,6 +332,8 @@ def facts_only_result(stock_id: str, eps_df: pd.DataFrame,
         latest = price_df.iloc[-1]
         result["current_price"] = round(float(latest["close_price"]), 2)
         result["price_date"]    = latest["date"].strftime("%Y-%m-%d")
+        # 還原品質是價格序列的事實，與 P/E 模型建不建得起來無關，照常更新
+        result["unofficial_adjustments"] = price_df.attrs.get("unofficial_adjustments", 0)
     return result
 
 
@@ -423,6 +428,7 @@ def calculate_valuation(stock_id: str) -> dict | None:
         "price_date":      latest_price["date"].strftime("%Y-%m-%d"),
         "status":          status,
         "warning":         combined_warning,
+        "unofficial_adjustments": price_df.attrs.get("unofficial_adjustments", 0),
     }
 
 

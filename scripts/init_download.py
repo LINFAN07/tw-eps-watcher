@@ -57,7 +57,7 @@ def step1_download_stocks():
         if sid.isdigit() and len(sid) == 4 and sid not in seen:
             seen.add(sid)
             stocks.append({"stock_id": sid, "name": item.get("stock_name", ""),
-                           "market": item.get("market_category", "未知")})
+                           "market": fm.roster_market(item)})
     upsert_batch("stocks", stocks)
     print(f"✅ 完成：共 {len(stocks)} 支股票")
     return [s["stock_id"] for s in stocks]

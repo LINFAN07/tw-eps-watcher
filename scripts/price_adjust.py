@@ -59,13 +59,28 @@ def back_adjust(dates: list[str], closes: list[float],
     只採計「除權息日 ≤ 最後交易日」且能取得前一交易日收盤價者，
     確保最新一日 factor=1（現價不被改動）。
     """
+    return _apply(dates, closes, _build_factors(dates, closes, ex_list, official))
+
+
+def _build_factors(dates: list[str], closes: list[float],
+                   ex_list: list[tuple[str, float, float]],
+                   official: dict[str, float] | None
+                   ) -> list[tuple[str, float, str]]:
+    """
+    產生升冪的 (除權息日, 還原因子, 來源) 清單，來源為 "official" 或 "computed"。
+
+    抽出來共用而非讓 unofficial_adjustments() 自己判一次：
+    兩份平行的判準必然隨時間漂移，屆時「旗標說自算、實際用官方」這種
+    對不上的錯誤沒有任何機制會發現（同型教訓見 CLAUDE.md 的
+    audit_external.check_ttm_window 必須與計算端同回看期數）。
+    """
     if not dates:
         return []
     last_date = dates[-1]
     official = official or {}
 
     events = {d: (c or 0.0, s or 0.0) for d, c, s in ex_list}
-    factors: list[tuple[str, float]] = []
+    factors: list[tuple[str, float, str]] = []
     for ex_date in sorted(set(events) | set(official)):
         if ex_date > last_date:
             continue
@@ -73,7 +88,7 @@ def back_adjust(dates: list[str], closes: list[float],
         if i == 0:
             continue                             # 除權息日早於所有股價，無基準可算
 
-        f = official.get(ex_date)
+        f, source = official.get(ex_date), "official"
         # 官方因子容許 >1：減資會使參考價高於前收，那是真實情況不是異常。
         # 上限取 20：彌補虧損型減資 95% 的參考價約為前收的 20 倍，台灣不罕見；
         # 先前設 5 會把減資 80% 以上的案例當成異常丟掉。
@@ -82,6 +97,7 @@ def back_adjust(dates: list[str], closes: list[float],
         if f is not None and not 0 < f <= 20:
             f = None
         if f is None:
+            source = "computed"
             cash, stock = events[ex_date]
             if cash <= 0 and stock <= 0:
                 continue
@@ -93,15 +109,44 @@ def back_adjust(dates: list[str], closes: list[float],
             f = (prev_close - cash) / (prev_close * (1 + stock / 10))
             if f <= 0 or f > 1:
                 continue                         # 股利 ≥ 前收（資料異常），跳過該筆
-        factors.append((ex_date, f))
+        factors.append((ex_date, f, source))
+    return factors                               # sorted() 迭代產生，天然升冪
 
-    # factors 已依 sorted() 迭代產生，天然升冪，不需再排序
+
+def _apply(dates: list[str], closes: list[float],
+           factors: list[tuple[str, float, str]]) -> list[float]:
+    """把還原因子由最晚的除息日往回連乘，套回價格序列"""
     adjusted = [0.0] * len(dates)
     cum = 1.0
-    j = len(factors) - 1                         # 由最晚的除息日往回套用
+    j = len(factors) - 1
     for k in range(len(dates) - 1, -1, -1):
         while j >= 0 and factors[j][0] > dates[k]:
             cum *= factors[j][1]
             j -= 1
         adjusted[k] = closes[k] * cum
     return adjusted
+
+
+def unofficial_adjustments(dates: list[str], closes: list[float],
+                           ex_list: list[tuple[str, float, float]],
+                           official: dict[str, float] | None = None) -> int:
+    """
+    這支股票的歷史序列中，有幾次除權息是【沒有交易所官方因子背書】的。
+
+    語意是「這段還原有沒有官方背書」——一個查得到答案的事實，
+    不是「這支股票的估值有問題」那種推測。差別很重要：
+    自算公式對配息與配股完全正確，只有【現金增資與減資】涵蓋不了，
+    而那兩者不會出現在 dividends 表裡，我們無從得知它是否發生過。
+    所以這個數字讀作「曝險次數」，不是「錯誤次數」。
+
+    為什麼有曝險：TWSE 的 TWT49U 可查 10 年歷史，TPEx 的端點【只給當日】，
+    漏跑就永久補不回。實測（2026-08-03）官方因子涵蓋率
+    上市 1,031/1,093 家、回溯 2016 年；上櫃僅 83/887 家且只有 2025 年起 ——
+    上櫃 2016～2024 這九年的除權息全靠自算。
+
+    未還原的資本事件會讓歷史股價偏高 → 歷史倍數偏高 → 目標價虛高，
+    方向固定是【看起來比實際便宜】（見模組開頭 1436 的實例），
+    所以受影響的股票會系統性地往便宜排行榜頂端跑。
+    """
+    return sum(1 for _, _, source in _build_factors(dates, closes, ex_list, official)
+               if source == "computed")

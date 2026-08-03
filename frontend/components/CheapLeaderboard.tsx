@@ -30,7 +30,9 @@ async function fetchModel(
   // stocks!inner + delisted_at is null：排除已下市股票。
   // 它們的價格凍結在最後一個交易日，目標價卻仍隨財報更新，折價越算越誇張，
   // 因此會專門往榜首跑（2026-07-21 實測前 6 名中有 4 名是下市股）。
-  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin${peExtra}${pbExtra}${ratioExtra},stocks!inner(name,industry,market)`
+  // unofficial_adjustments 只用來標示，不參與過濾：它是「還原無官方背書」的曝險，
+  // 不是「估值有錯」的斷言。拿它篩掉股票等於把上櫃整批當成有問題（見 lib/adjustmentQuality.ts）。
+  const selectFields = `stock_id,current_price,${priceCol},ttm_eps,pb_book_value,operating_margin,unofficial_adjustments${peExtra}${pbExtra}${ratioExtra},stocks!inner(name,industry,market)`
 
   // 排序鍵（現價 ÷ 便宜價）是計算值，資料庫無法排序，必須取回完整候選再排。
   // 原本只取前 200 筆，但「便宜」股最多達 525 支（P/B），
@@ -64,6 +66,7 @@ async function fetchModel(
     ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
     pb_book_value:    r.pb_book_value != null ? Number(r.pb_book_value) : null,
     operating_margin: r.operating_margin != null ? Number(r.operating_margin) : null,
+    unofficial_adjustments: r.unofficial_adjustments != null ? Number(r.unofficial_adjustments) : null,
     band_level:       ratioCols
       ? getBandStability(r[ratioCols[0]] as number, r[ratioCols[1]] as number,
                          r[ratioCols[2]] as number, model)?.level ?? null
@@ -135,6 +138,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
     'ps_status', 'ps_cheap_price',
     'pfcf_status', 'pfcf_cheap_price',
     'ttm_eps', 'pb_book_value', 'operating_margin',
+    'unofficial_adjustments',               // 標示用，不參與過濾（見 fetchModel 的說明）
     'stocks!inner(name,industry,market)',   // inner join 以套用下市過濾
   ].join(',')
 
@@ -211,6 +215,7 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
       ttm_eps:          r.ttm_eps != null ? Number(r.ttm_eps) : null,
       pb_book_value:    r.pb_book_value != null ? Number(r.pb_book_value) : null,
       operating_margin: r.operating_margin != null ? Number(r.operating_margin) : null,
+      unofficial_adjustments: r.unofficial_adjustments != null ? Number(r.unofficial_adjustments) : null,
       stocks:           r.stocks as { name: string; industry: string; market: string } | null,
       models,
     })

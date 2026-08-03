@@ -6,7 +6,7 @@
 CREATE TABLE IF NOT EXISTS stocks (
   stock_id    VARCHAR(10)  PRIMARY KEY,           -- 股票代碼，例如 "2330"
   name        VARCHAR(100) NOT NULL,              -- 公司名稱，例如 "台積電"
-  market      VARCHAR(10)  NOT NULL,              -- "TWSE"（上市）或 "TPEx"（上櫃）
+  market      VARCHAR(10)  NOT NULL,              -- "TWSE"（上市）/ "TPEx"（上櫃）/ "Emerging"（興櫃）；由 daily_price_update.update_market() 每日以交易所清單維護
   industry    VARCHAR(100)                        -- 產業別，例如 "半導體"；由 backfill_industry.py 填入
 );
 
@@ -470,3 +470,36 @@ ALTER TABLE valuations
     cheap_price IS NOT NULL AND current_price > 0
     AND cheap_price > current_price * 3
   ) STORED;
+
+-- =============================================
+-- 除權息還原的官方背書程度（2026-08-03）
+-- =============================================
+--
+-- 這支股票的歷史序列中，有幾次除權息是【沒有交易所官方因子背書】、
+-- 只能用 dividends 的現金股利與股票股利自算的。由 calculate_valuation.py
+-- 寫入（值出自 price_adjust.unofficial_adjustments()，與 back_adjust 共用
+-- 同一份因子建構邏輯，兩邊不會漂移）。
+--
+-- 語意是「這段還原有沒有官方背書」——查得到答案的事實，
+-- 不是「這支股票估值有問題」的推測。自算公式對配息與配股完全正確，
+-- 涵蓋不了的只有【現金增資與減資】，而那兩者不會出現在 dividends 表裡，
+-- 我們無從得知它是否發生過。所以這個數字讀作【曝險次數】，不是錯誤次數。
+--
+-- 為什麼會有曝險（2026-08-03 實測）：
+--     TWSE 的 TWT49U 可查 10 年區間 → 上市官方因子涵蓋 1,031/1,093 家、回溯 2016 年
+--     TPEx 的端點【只給當日】，漏跑永久補不回 → 上櫃僅 83/887 家且只有 2025 年起
+-- 亦即上櫃 2016～2024 這九年的除權息全靠自算。
+-- 上市的 8,566 筆官方因子事件中有 409 筆（4.8%）在 dividends 查無對應，
+-- 那正是自算路徑接不到的那一類；同比例套到上櫃即為其曝險規模。
+--
+-- 為什麼要標示：未還原的資本事件讓歷史股價偏高 → 歷史倍數偏高 → 目標價虛高，
+-- 方向固定是【看起來比實際便宜】，受影響的股票會系統性往便宜排行榜頂端跑
+-- （同型現象見 dividends.stock_dividend 的 1436 實例、stocks.delisted_at 的下市股）。
+--
+-- 盲區：這個欄位只答得出「有沒有官方背書」，答不出「那段期間到底有沒有發生
+-- 現金增資或減資」。次數為 0 不代表還原一定正確，只代表沒有這一類曝險；
+-- 次數高也不代表一定錯，只代表無從查證。真正要抓「實際發生了未還原事件」
+-- 得靠價格斷崖偵測（validate_valuations.py C 段），但那段目前只掃近 30 天，
+-- 更早的歷史是週採樣、10% 門檻失去意義，全歷史普查尚未做。
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS unofficial_adjustments SMALLINT;

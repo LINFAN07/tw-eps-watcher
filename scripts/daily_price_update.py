@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import requests
+from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from dotenv import load_dotenv
 from supabase import create_client
@@ -212,6 +213,55 @@ def mark_delisted(seen: set[str], known: set[str], data_date: str):
     print(f"  在市 {len(today_seen)} 檔，缺席逾 {ABSENT_DAYS} 日者已標記下市")
 
 
+def update_market(sources: list[tuple[str, str | None, dict]], current: dict[str, str]):
+    """
+    以「今天出現在哪個交易所的清單」維護 stocks.market。
+
+    為什麼要這個欄位：原本 init_download.py 取 FinMind 的 `market_category`，
+    但該資料集根本沒有這個欄位名（實際叫 `type`），fallback 讓全表 2,540 筆
+    一律寫成「未知」。市場別缺席的代價是沉默的——沒有它，
+    稽核無法分層抽樣（上市與上櫃的資料品質天差地遠，見 ex_right_factors
+    的涵蓋率：上市 1,031/1,093 家回溯 2016 年，上櫃僅 83/887 家且只有 2025 年起），
+    前端也無法讓使用者按市場篩選。
+
+    以交易所清單為準而非 FinMind：這裡的三份清單就是市場別的定義本身，
+    且每日更新已經抓好，回填不需要任何額外的 API 呼叫。
+    轉板（興櫃 → 上櫃 → 上市）會自然反映，不需人工介入。
+
+    同 mark_delisted，呼叫端必須確認【所有市場都抓取成功】——
+    少一個市場就回填，等於把該市場的股票全部寫成錯誤的市場別或維持舊值。
+
+    current 為 {股票代碼: 現有 market}，由呼叫端讀名冊時一併帶入
+    （既要用它濾掉不在名冊的代碼，也要比對新舊值，不必為同一張表再掃一次）。
+    """
+    # 同一支只會出現在一個市場；真有重複時以清單順序（上市 > 上櫃 > 興櫃）為準
+    latest = {}
+    for market, _, prices in sources:
+        for sid in prices:
+            if sid in current:
+                latest.setdefault(sid, market)
+
+    # 只寫有變動的：每天無謂地 UPDATE 全表 2,400 列既浪費配額也蓋掉 updated_at 語意
+    changed = defaultdict(list)
+    for sid, market in latest.items():
+        if current.get(sid) != market:
+            changed[market].append(sid)
+
+    if not changed:
+        print("  市場別無變動")
+        return
+
+    # 必須用 UPDATE 而非 upsert：upsert 會先嘗試 INSERT，而 stocks.name 是 NOT NULL，
+    # 只帶 stock_id 的列會在衝突解析前就違反約束。
+    for market, sids in changed.items():
+        for i in range(0, len(sids), 200):
+            (supabase.table("stocks").update({"market": market})
+             .in_("stock_id", sids[i:i + 200]).execute())
+        moved = [s for s in sids if current.get(s) not in (None, "未知")]
+        print(f"  {market}: {len(sids)} 檔"
+              + (f"（其中 {len(moved)} 檔轉板：{'、'.join(moved[:5])}）" if moved else ""))
+
+
 def judge_status(price: float, cheap, fair) -> str:
     """
     以現價比對「已算好的」目標價，判定便宜/合理/昂貴。
@@ -321,14 +371,16 @@ def run():
     #    任一來源抓取失敗即讓整個工作失敗——少一個市場就是資料缺口，
     #    絕不可吞掉錯誤後回報成功（2026-07-14 上櫃缺口即因此三天無人知悉）。
     sources, failed = [], []
-    for label, fetch in (("上市（TWSE）", fetch_twse_prices),
-                         ("上櫃（TPEx）", fetch_tpex_prices),
-                         ("興櫃（TPEx）", fetch_esb_prices)):
+    for market, label, fetch in (("TWSE",     "上市（TWSE）", fetch_twse_prices),
+                                 ("TPEx",     "上櫃（TPEx）", fetch_tpex_prices),
+                                 ("Emerging", "興櫃（TPEx）", fetch_esb_prices)):
         print(f"取得{label}收盤價...")
         try:
             src_date, prices = fetch()
             print(f"  {len(prices)} 支，資料日期 {src_date or '無'}")
-            sources.append((src_date, prices))
+            # 市場別隨資料一起帶下去：抓取失敗時該來源不會進 sources，
+            # 若靠迴圈順序推市場別會整批錯位。
+            sources.append((market, src_date, prices))
         except FetchError as e:
             print(f"  ❌ {label} 抓取失敗：{e}")
             failed.append(label)
@@ -337,25 +389,29 @@ def run():
         print(f"\n❌ 以下來源抓取失敗，資料不完整：{'、'.join(failed)}")
         print("   已取得的部分仍會寫入，但工作將以失敗結束以觸發通知。")
 
-    if not sources or not any(d and p for d, p in sources):
+    if not sources or not any(d and p for _, d, p in sources):
         if failed:
             sys.exit(1)          # 全部失敗 ≠ 休市，必須通報
         print("\n今日無交易資料（休市），結束。")
         return
 
     # 2. 過濾出資料庫中已有的股票（分頁繞過 1000 筆上限）
-    known, offset = set(), 0
+    #    順便帶回 market：update_market() 要比對新舊值才知道哪些需要寫，
+    #    不然就是為了同一張表再掃一次全表。排序確保跨頁不重複、不遺漏。
+    known_market, offset = {}, 0
     while True:
-        resp = supabase.table("stocks").select("stock_id").range(offset, offset + 999).execute()
-        known.update(r["stock_id"] for r in resp.data)
+        resp = (supabase.table("stocks").select("stock_id,market")
+                .order("stock_id").range(offset, offset + 999).execute())
+        known_market.update({r["stock_id"]: r["market"] for r in resp.data})
         if len(resp.data) < 1000:
             break
         offset += 1000
+    known = set(known_market)
 
     # 3. 寫入 daily_prices，每個市場用自己的資料日期
     #    （各交易所的發布時程不同，硬套系統日期會讓價格落在錯誤的交易日）
     price_rows = []
-    for src_date, prices in sources:
+    for _, src_date, prices in sources:
         if not src_date or not prices:
             continue
         price_rows += [{"stock_id": sid, "date": src_date, "close_price": p}
@@ -367,7 +423,7 @@ def run():
 
     # 供估值使用的現價：同一支股票若多個來源都有，取資料日期較新者
     all_prices: dict[str, tuple[str, float]] = {}
-    for src_date, prices in sources:
+    for _, src_date, prices in sources:
         if not src_date:
             continue
         for sid, p in prices.items():
@@ -378,11 +434,14 @@ def run():
     #    少一個市場就做判定，等於把「來源故障」寫成「整個市場下市」——
     #    那比不做判定嚴重得多，故寧可跳過一天。
     if failed:
-        print("\n有來源抓取失敗，跳過下市偵測（避免把故障誤判為下市）")
+        print("\n有來源抓取失敗，跳過下市偵測與市場別回填（避免把故障誤判為下市）")
     else:
         print("\n下市偵測...")
-        seen = {sid for _, prices in sources for sid in prices}
-        mark_delisted(seen, known, max(d for d, _ in sources if d))
+        seen = {sid for _, _, prices in sources for sid in prices}
+        mark_delisted(seen, known, max(d for _, d, _ in sources if d))
+
+        print("\n市場別回填...")
+        update_market(sources, known_market)
 
     # 5. 快速更新估值現價與狀態
     print("\n更新估值...")
