@@ -109,10 +109,21 @@ BVPS_BAD_RATE_LIMIT = 0.08
 # 稽核若只看「有比對到的那些對不對」，資料缺席時會印出漂亮的綠燈。
 MIN_COVERAGE = 0.5
 
-# 重試間隔（秒）。第 1、2 次失敗後各等這麼久，第 3 次失敗才拋例外。
-# 與 daily_price_update.get_json() 同一個用意：來源抽風要等得過，
-# 端點真的壞了才叫。
-RETRY_BACKOFF = (5, 15)
+# 重試間隔（秒）。每次失敗後等這麼久，用完才拋例外（＝共 5 次嘗試）。
+# 與 daily_price_update.get_json() 同一個用意：來源抽風要等得過，端點真的壞了才叫。
+# 為什麼要這麼耐：交易所端點對 GitHub runner 明顯不穩，2026-08-03 一天內
+# 三種形態都出現過——回空 body（openapi.twse）、Response ended prematurely
+# （tpex）、connect timeout（openapi.twse），而同一時間從本地打全部 200。
+# 單一端點最壞情形約 4 分鐘後放棄，一週一次的稽核付得起。
+RETRY_BACKOFF = (10, 30, 60, 120)
+
+# (連線, 讀取) 逾時。連線階段給 10 秒就夠——不通就是不通，等 60 秒只是白等，
+# 省下來的時間拿去多試幾次比較有用。
+TIMEOUT = (10, 60)
+
+# 沒有 UA 的請求會被部分交易所端點擋掉（daily_price_update 也是為此帶 UA）。
+# 回空 body 這種症狀很像 WAF 過濾，帶上以排除這個可能。
+UA = {"User-Agent": "Mozilla/5.0"}
 
 QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
 
@@ -136,18 +147,19 @@ class AuditError(Exception):
 
 
 def fetch_json(url: str, verify_ssl: bool = True) -> list:
-    """抓取整批端點。三次都失敗就拋例外——絕不 catch 之後回傳空清單，
+    """抓取整批端點。全部重試失敗就拋例外——絕不 catch 之後回傳空清單，
     那會讓呼叫端把故障當成「無資料」，繼續跑完並回報成功。"""
     last = None
-    for attempt in range(3):
+    for attempt in range(len(RETRY_BACKOFF) + 1):
         if attempt:
             # 重試之間必須等待。舊版三次連打在 4 秒內用完，等於只試了一次：
-            # 2026-08-03 排程失敗即為此——t187ap06_L_ci 回了空回應（非 JSON），
+            # 2026-08-03 04:32 排程失敗即為此——t187ap06_L_ci 回了空回應（非 JSON），
             # 三次都撞在同一個抽風窗口內，稽核判定來源故障中止；
             # 一小時後同一端點正常回 69 KB，資料完好無缺。
             time.sleep(RETRY_BACKOFF[attempt - 1])
         try:
-            data = requests.get(url, timeout=60, verify=verify_ssl).json()
+            data = requests.get(url, timeout=TIMEOUT, headers=UA,
+                                verify=verify_ssl).json()
             if isinstance(data, list):
                 return data
             # openapi 的整批端點直接回陣列；www.twse.com.tw 的 rwd 端點回 {stat, data}。
@@ -164,7 +176,7 @@ def fetch_json(url: str, verify_ssl: bool = True) -> list:
         except Exception as e:
             last = str(e)
         print(f"  ⚠️  第 {attempt + 1} 次請求失敗 {url}：{last}")
-    raise AuditError(f"{url} 連續 3 次失敗：{last}")
+    raise AuditError(f"{url} 連續 {len(RETRY_BACKOFF) + 1} 次失敗：{last}")
 
 
 def field(row: dict, *names) -> str:
