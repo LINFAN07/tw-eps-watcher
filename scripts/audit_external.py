@@ -38,6 +38,9 @@
     那些歷史數字從未逐點對過外部來源。2026-07-22 修掉的面額與半年報 TTM
     兩個 bug 都會污染整條歷史序列——稽核只能證明修完之後最新一期對了。
   - **上櫃／興櫃的每股淨值**：B 段只涵蓋上市，TPEx 的淨值欄名未驗證。
+  - **申報中的那一期**：官方端點一進入新財報季／新月份就切到新期別，此時
+    涵蓋率門檻會放它過（見 `is_settled`／`is_month_settled`），
+    整批漏寫最多晚 10 天（月營收 5 天）才叫。
 
 用法：
   python scripts/audit_external.py
@@ -47,6 +50,7 @@
 import argparse
 import os
 import sys
+import time
 from datetime import date, timedelta
 
 import requests
@@ -105,7 +109,22 @@ BVPS_BAD_RATE_LIMIT = 0.08
 # 稽核若只看「有比對到的那些對不對」，資料缺席時會印出漂亮的綠燈。
 MIN_COVERAGE = 0.5
 
+# 重試間隔（秒）。第 1、2 次失敗後各等這麼久，第 3 次失敗才拋例外。
+# 與 daily_price_update.get_json() 同一個用意：來源抽風要等得過，
+# 端點真的壞了才叫。
+RETRY_BACKOFF = (5, 15)
+
 QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
+
+# 各季的財報申報截止日（季末日 → 截止日的月、日）。年報截止日落在隔年。
+# ⚠️ quarterly_eps_update.target_quarter() 也編了同一組日期，改一邊要看另一邊。
+FILING_DEADLINE = {"03-31": (5, 15), "06-30": (8, 14),
+                   "09-30": (11, 14), "12-31": (3, 31)}
+# 截止日之後再給下載排程幾天。quarterly_fundamentals 排在 5/18、8/17、11/17、4/3，
+# quarterly_eps 在財報季每週一，10 天足以涵蓋。
+FILING_GRACE_DAYS = 10
+# 月營收：截止日為次月 10 日，monthly_fundamentals 排每月 11 日，5 天足以涵蓋。
+REVENUE_GRACE_DAYS = 5
 
 # 期數判定與生產端共用同一份實作，不再靠註解約定一致（2026-07-22 曾因
 # 一邊 8 期、一邊 6 期而誤報）。LOOKBACK 僅用於本檔挑選最近幾期做驗算。
@@ -121,6 +140,12 @@ def fetch_json(url: str, verify_ssl: bool = True) -> list:
     那會讓呼叫端把故障當成「無資料」，繼續跑完並回報成功。"""
     last = None
     for attempt in range(3):
+        if attempt:
+            # 重試之間必須等待。舊版三次連打在 4 秒內用完，等於只試了一次：
+            # 2026-08-03 排程失敗即為此——t187ap06_L_ci 回了空回應（非 JSON），
+            # 三次都撞在同一個抽風窗口內，稽核判定來源故障中止；
+            # 一小時後同一端點正常回 69 KB，資料完好無缺。
+            time.sleep(RETRY_BACKOFF[attempt - 1])
         try:
             data = requests.get(url, timeout=60, verify=verify_ssl).json()
             if isinstance(data, list):
@@ -167,6 +192,38 @@ def quarter_end_of(row: dict) -> str | None:
     if not y.isdigit() or s not in QUARTER_END:
         return None
     return f"{int(y) + 1911}-{QUARTER_END[s]}"
+
+
+def is_settled(quarter_end: str, today: date) -> bool:
+    """該季的申報截止日 + 寬限期是否已過（＝這一季的資料本來就該齊了）。
+
+    為什麼需要這個判定：交易所的財報端點一進入新的財報季就切到新季別，
+    此時只有早報公司申報，而我們的下載排程還沒排到（Q2 截止 8/14、
+    quarterly_fundamentals 排 8/17）。涵蓋率門檻在這段期間必然誤報——
+    2026-08-03 的排程失敗就是這樣：官方 90 筆、資料庫 0 筆、涵蓋率 0%，
+    但資料一筆都沒錯，只是還沒下載。稽核一開始誤報就沒人看了。
+
+    ⚠️ 盲區：申報中的那一季若真的整批漏寫（2026-07-14 事故的形狀），
+    寬限期內不會被抓。兩個東西接住它——(1) 已申報且我們有抓到的個股，
+    數值照樣逐筆比對；(2) 寬限期一過就轉為硬性失敗，最多晚 10 天叫。
+    """
+    year, month_day = int(quarter_end[:4]), quarter_end[5:]
+    month, day = FILING_DEADLINE[month_day]
+    # 年報（12-31）的截止日在隔年 3/31
+    if month_day == "12-31":
+        year += 1
+    return today > date(year, month, day) + timedelta(days=FILING_GRACE_DAYS)
+
+
+def is_month_settled(year_month: str, today: date) -> bool:
+    """該月營收的申報截止日（次月 10 日）+ 寬限期是否已過。
+
+    與 is_settled 同一個道理與同一個盲區，只是月營收的申報週期不同：
+    官方端點每月 10 日前後就切到新月份，而 monthly_fundamentals 排 11 日跑。
+    """
+    year, month = int(year_month[:4]), int(year_month[5:7])
+    year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return today > date(year, month, 10) + timedelta(days=REVENUE_GRACE_DAYS)
 
 
 def roc_month_to_iso(roc_ym: str) -> str | None:
@@ -225,19 +282,48 @@ def db_values(table: str, col: str, quarters: set) -> dict:
         offset += 1000
 
 
+def coverage_problem(official: dict, pending: set, due_checked: int, what: str) -> list[str]:
+    """涵蓋率門檻。「資料庫整批沒寫進去」必須是失敗，不能因為「沒有不符」而通過——
+    官方回 1,079 筆、我們 0 筆時 checked=0、bad=[]，舊版會印「✅ 全部一致」並
+    exit 0，正是 2026-07-14 那次事故的形狀（TPEx 整批沒寫入卻回報完成）。
+
+    分母只算「申報截止日已過」的期別：新財報季／新月份剛開始時，官方端點已切到
+    新期別、我們的下載排程還沒排到，拿全部筆數當分母必然誤報（見 is_settled）。
+    季報與月營收兩個呼叫點共用這一份，不再各寫一次——本專案被平行實作漂移咬過。
+    """
+    due_total = sum(period not in pending for _, period in official)
+    if pending:
+        print(f"  申報中，不計入涵蓋率：{', '.join(sorted(pending))}"
+              f"（{len(official) - due_total} 筆）")
+    if due_checked >= due_total * MIN_COVERAGE:
+        return []
+    return [f"⚠️ {what}涵蓋率過低：官方 {due_total} 筆，資料庫只對到 {due_checked} 筆"
+            f"（{due_checked / max(due_total, 1):.0%}，門檻 {MIN_COVERAGE:.0%}）"
+            f"——多半是某次下載整批沒寫入，而非數值錯誤"]
+
+
 def compare(official: dict, table: str, col: str,
-            tol: float, relative: bool = False) -> list[str]:
-    """逐筆比對官方值與資料庫值。回傳不符清單。"""
+            tol: float, relative: bool = False) -> tuple[list[str], list[str]]:
+    """逐筆比對官方值與資料庫值。回傳（逐筆不符清單, 涵蓋率問題）。
+
+    兩者分開回傳，是因為 check_bvps 會用「不符佔比」豁免逐筆差異，
+    但涵蓋率（整批漏寫）不在可豁免之列——混在一起就會被那個門檻吞掉。
+    """
     quarters = {q for _, q in official}
     ours = db_values(table, col, quarters)
 
-    bad, checked, missing, near = [], 0, 0, 0
+    # 申報中的季別（截止日＋寬限期還沒到）不計入涵蓋率，但數值照比
+    today = date.today()
+    pending = {q for q in quarters if not is_settled(q, today)}
+
+    bad, checked, missing, near, due_checked = [], 0, 0, 0, 0
     for key, theirs in official.items():
         mine = ours.get(key)
         if mine is None:
             missing += 1
             continue
         checked += 1
+        due_checked += key[1] not in pending
         diff = abs(mine - theirs)
         limit = abs(theirs) * tol if relative else tol
         if diff > limit:
@@ -247,13 +333,7 @@ def compare(official: dict, table: str, col: str,
             near += 1
 
     print(f"\n  比對 {checked} 筆，不符 {len(bad)} 筆，資料庫無對應 {missing} 筆")
-    # 「資料庫整批沒寫進去」必須是失敗，不能因為「沒有不符」而通過。
-    # 官方回 1,079 筆、我們 0 筆時，checked=0、bad=[] → 舊版會印「✅ 全部一致」
-    # 並 exit 0，正是 2026-07-14 那次事故的形狀（TPEx 整批沒寫入卻回報完成）。
-    if checked < len(official) * MIN_COVERAGE:
-        bad.append(f"⚠️ 涵蓋率過低：官方 {len(official)} 筆，資料庫只對到 {checked} 筆"
-                   f"（{checked / max(len(official), 1):.0%}，門檻 {MIN_COVERAGE:.0%}）"
-                   f"——多半是某次下載整批沒寫入，而非數值錯誤")
+    coverage = coverage_problem(official, pending, due_checked, "")
     if relative:
         # 容差內但差距 >1% 者單獨計數：這是「還沒壞但值得盯」的區間，
         # 若某天暴增，代表演算法或來源出現系統性偏移
@@ -262,13 +342,18 @@ def compare(official: dict, table: str, col: str,
     if missing > checked * 0.5:
         # 對不上的比對得上的還多，多半是季別對齊或欄名取錯，而非資料真的缺
         print(f"  ⚠️  無對應筆數偏高，請確認 {table} 是否已更新到最新季")
-    return bad
+    if checked == 0:
+        # 涵蓋率門檻已放過申報中的季別，這裡必須明說「這段沒驗到東西」，
+        # 否則收尾會印出「✅ 全部與交易所一致」——那就是本專案最怕的漂亮綠燈
+        print(f"  （{table} 此段未實際驗證任何資料）")
+    return bad, coverage
 
 
 def check_eps() -> list[str]:
     print("\n=== A. 每股盈餘（綜合損益表 vs eps_quarterly）===")
     official = official_values(INCOME_ENDPOINTS, ("基本每股盈餘（元）",))
-    return compare(official, "eps_quarterly", "eps", EPS_TOLERANCE)
+    bad, coverage = compare(official, "eps_quarterly", "eps", EPS_TOLERANCE)
+    return bad + coverage
 
 
 def check_bvps() -> list[str]:
@@ -287,8 +372,8 @@ def check_bvps() -> list[str]:
     print("\n=== B. 每股淨值（資產負債表 vs balance_sheet_quarterly）===")
     print("  注意：僅涵蓋上市；上櫃／興櫃的 TPEx 淨值欄名未驗證，故不納入")
     official = official_values(BALANCE_ENDPOINTS, ("每股參考淨值",))
-    bad = compare(official, "balance_sheet_quarterly",
-                  "book_value_per_share", BVPS_REL_TOLERANCE, relative=True)
+    bad, coverage = compare(official, "balance_sheet_quarterly",
+                            "book_value_per_share", BVPS_REL_TOLERANCE, relative=True)
 
     rate = len(bad) / len(official) if official else 0
     print(f"  不符佔比 {rate:.1%}（門檻 {BVPS_BAD_RATE_LIMIT:.0%}，"
@@ -297,8 +382,10 @@ def check_bvps() -> list[str]:
         print("  ✓ 在已知的不可重現範圍內，不計入失敗。差距最大的 5 筆：")
         for b in bad[:5]:
             print(f"      {b}")
-        return []
-    return bad
+        # 佔比門檻只豁免「逐筆對不上」（交易所每股淨值本就無法重現），
+        # 不豁免涵蓋率——整批漏寫混進 bad 時佔比很低，會被這個門檻靜默吞掉。
+        return coverage
+    return bad + coverage
 
 
 def check_ttm_window() -> list[str]:
@@ -416,13 +503,19 @@ def check_revenue() -> list[str]:
             break
         offset += 1000
 
-    bad, checked, missing = [], 0, 0
+    # 申報中的月份不計入涵蓋率（見 is_month_settled）。官方端點每月 10 日前後
+    # 就切到新月份，我們的下載排在 11 日，否則每個月都會誤報一次。
+    today = date.today()
+    pending = {m for m in months if not is_month_settled(m, today)}
+
+    bad, checked, missing, due_checked = [], 0, 0, 0
     for key, theirs in official.items():
         mine = ours.get(key)
         if mine is None:
             missing += 1
             continue
         checked += 1
+        due_checked += key[1] not in pending
         # 相對誤差 1%：容忍四捨五入，但單位錯（1000 倍）必被抓出
         if theirs == 0:
             if mine != 0:
@@ -432,8 +525,9 @@ def check_revenue() -> list[str]:
                        f"（{mine / theirs:.2f} 倍）")
     print(f"  比對 {checked} 筆，不符 {len(bad)} 筆，資料庫無對應 {missing} 筆")
     print(f"  涵蓋月份：{', '.join(sorted(months))}")
-    if checked < len(official) * MIN_COVERAGE:
-        bad.append(f"⚠️ 月營收涵蓋率過低：官方 {len(official)} 筆，資料庫只對到 {checked} 筆")
+    bad += coverage_problem(official, pending, due_checked, "月營收")
+    if checked == 0:
+        print("  （monthly_revenue 此段未實際驗證任何資料）")
     return bad
 
 
