@@ -46,7 +46,8 @@ async function fetchPeers(industry: string | null): Promise<PeerRow[]> {
 
 async function fetchStock(code: string) {
   const db = getSupabase()
-  const [stockRes, valRes, epsRes, pbDate, psDate, pfcfDate, yieldDate] = await Promise.all([
+  const [stockRes, valRes, epsRes, pbDate, psDate, pfcfDate, yieldDate,
+         capitalRes] = await Promise.all([
     db.from('stocks').select('stock_id,name,market,industry,listed_shares').eq('stock_id', code).single(),
     db.from('valuations').select('*').eq('stock_id', code).single(),
     // 取最近 8 季：前 4 季組成 TTM，後 4 季用來比較去年同期趨勢
@@ -58,6 +59,11 @@ async function fetchStock(code: string) {
     latestDate(db, 'monthly_revenue', 'year_month', code),
     latestDate(db, 'cash_flows_quarterly', 'quarter_end_date', code),
     latestDate(db, 'dividends', 'ex_date', code),
+    // 未還原的資本事件（減資／分割／換發）：估值帶在事件那一點跨了兩套股數基準。
+    // 個股頁照常顯示該股與數字——那是查詢不是推薦（同 pe_reliable 的處理），
+    // 但要讓使用者知道這條帶斷在哪一天。
+    db.from('unadjusted_capital_events')
+      .select('event_date,share_ratio').eq('stock_id', code).order('event_date'),
   ])
   const eps8 = epsRes.data ?? []
   // 同業資料要等 stock 查完才知道產業，故獨立於上面的 Promise.all
@@ -65,6 +71,7 @@ async function fetchStock(code: string) {
   return {
     stock: stockRes.data,
     valuation: valRes.data,
+    capitalEvents: capitalRes.data ?? [],
     peers,
     ttmQuarters: eps8.slice(0, 4),
     prevYearQuarters: eps8.slice(4, 8),
@@ -90,7 +97,7 @@ export default async function StockPage({ params, searchParams }: Props) {
   const { code } = await params
   // ?model=pb：使用者從 P/B 排行榜點進來，估值卡預設顯示該模型
   const { model: fromModel } = await searchParams
-  const { stock, valuation, ttmQuarters, prevYearQuarters, asOf, peers } = await fetchStock(code)
+  const { stock, valuation, ttmQuarters, prevYearQuarters, asOf, peers, capitalEvents } = await fetchStock(code)
 
   if (!stock) notFound()
 
@@ -130,7 +137,7 @@ export default async function StockPage({ params, searchParams }: Props) {
       {/* 估值卡片 */}
       {valuation ? (
         <div className="mb-8">
-          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} asOf={asOf} fromModel={fromModel} />
+          <ValuationCard v={valuation} ttmQuarters={ttmQuarters} prevYearQuarters={prevYearQuarters} industry={stock.industry} asOf={asOf} fromModel={fromModel} capitalEvents={capitalEvents} />
         </div>
       ) : (
         <div className="mb-8 p-6 bg-gray-50 rounded-2xl border text-gray-400 text-center">

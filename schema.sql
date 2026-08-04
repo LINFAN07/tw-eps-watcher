@@ -503,3 +503,39 @@ ALTER TABLE valuations
 -- 更早的歷史是週採樣、10% 門檻失去意義，全歷史普查尚未做。
 ALTER TABLE valuations
   ADD COLUMN IF NOT EXISTS unofficial_adjustments SMALLINT;
+
+-- =============================================
+-- 未還原的資本事件（2026-08-04）
+-- =============================================
+--
+-- 減資、面額分割、股份換發會讓股價一夜跳動數倍，但【不走除權除息公告】，
+-- 兩條還原路徑都接不到：TWT49U／tpex_exright_daily 只收除權除息，
+-- dividends 的自算公式也只涵蓋配息與配股。歷史股價因此停在事件前的舊股數
+-- 基準，估值帶整體位移——減資使目標價偏低（誤判「昂貴」），分割／增資使
+-- 目標價偏高（誤判「便宜」、衝上排行榜）。
+--
+-- 由 scripts/audit_capital_events.py 全歷史普查後寫入（掛 weekly_validate.yml）。
+-- 三個條件交叉才算數，判準與三次修正的過程寫在該腳本開頭：
+--   A 股本季變動達門檻且無還原記錄  B 同期還原後價格留下跳空
+--   C 價格比 × 股數比 ≈ 1（資本事件的定義性特徵，市場波動不滿足）
+-- 2026-08-04 首次普查：121 筆、112 支（上市 41／上櫃 52／興櫃 14）。
+-- 抽驗 4 檔全部確認，最強證據是 1472 三洋實業 2017-11-03 單週 +81.2%——
+-- 漲跌幅上限下一週最多 +61%，且該區間 dividends 與官方因子皆 0 筆。
+--
+-- 為什麼是獨立表而非 valuations 的欄位：
+-- 一支股票可能有多次事件，逐筆存才答得出「這是誰給的、哪一天的」。
+-- 前端直接讀本表當排除清單（112 支，一次查詢），
+-- 不在 valuations 放同步欄位——那會多一個「腳本沒跑就是舊值」的失效點。
+--
+-- 注意 event_date 是【我們觀測到跳空的交易日】，不是公司公告的除權基準日：
+-- 2016~2025 的股價是週採樣，兩者可能差幾天。要精確日期須查公開資訊觀測站。
+CREATE TABLE IF NOT EXISTS unadjusted_capital_events (
+  stock_id     VARCHAR(10)    NOT NULL REFERENCES stocks(stock_id) ON DELETE CASCADE,
+  event_date   DATE           NOT NULL,  -- 觀測到價格跳空的交易日（見上方說明）
+  quarter_end  DATE           NOT NULL,  -- 股本變動所屬季別（來源：balance_sheet_quarterly）
+  share_ratio  DECIMAL(12, 6) NOT NULL,  -- 新股數 ÷ 舊股數（來源：shares_thousand）
+  price_ratio  DECIMAL(12, 6) NOT NULL,  -- 還原後價格比（來源：daily_prices + back_adjust）
+  product      DECIMAL(8, 4)  NOT NULL,  -- 兩者乘積，資本事件應接近 1
+  detected_at  DATE           NOT NULL,  -- 本列由哪一次普查產生
+  PRIMARY KEY (stock_id, event_date)
+);

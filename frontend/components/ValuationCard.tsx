@@ -226,6 +226,7 @@ export default function ValuationCard({
   industry,
   asOf = {},
   fromModel,
+  capitalEvents = [],
 }: {
   v: Valuation
   ttmQuarters?: EpsQuarter[]
@@ -234,6 +235,9 @@ export default function ValuationCard({
   asOf?: AsOf
   /** 使用者從哪個模型的排行榜點進來（?model=pb）。有值時預設顯示該模型。 */
   fromModel?: string
+  /** 未還原的資本事件（見 schema.sql unadjusted_capital_events）。
+   *  有值代表估值帶跨了兩套股數基準，目標價不可採用。 */
+  capitalEvents?: { event_date: string; share_ratio: number | string }[]
 }) {
   const recommended = getRecommendedModel(industry, v)
   // 從排行榜點進來時，先顯示使用者剛才在看的那個模型。
@@ -318,6 +322,22 @@ export default function ValuationCard({
         <div className="flex gap-2 items-start bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 mb-4 text-sm text-sky-800">
           <span className="mt-0.5 shrink-0">🔀</span>
           <span>{v.capital_change_warning}</span>
+        </div>
+      )}
+      {/* 未還原的資本事件（減資／分割／換發）：與上面的灰標不同，這個是
+          【已用兩個獨立證據確認】的錯誤，不是曝險——估值帶在事件那一點跨了
+          兩套股數基準，目標價本身就是錯的。故用紅色，且該股已排除出排行榜。 */}
+      {capitalEvents.length > 0 && (
+        <div className="flex gap-2 items-start bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4 text-sm text-red-800">
+          <span className="mt-0.5 shrink-0">⛔</span>
+          <span>
+            偵測到 {capitalEvents.length} 次未還原的資本事件（
+            {capitalEvents.map(e =>
+              `${e.event_date} 股數 ×${Number(e.share_ratio).toFixed(2)}`).join('、')}
+            ）。該時點前後的歷史股價基準不同，下方的估值帶與目標價
+            <strong className="font-semibold">不可採用</strong>；
+            本股已排除出便宜排行榜與推薦。
+          </span>
         </div>
       )}
       {/* 還原資料來源註記（任何模型皆顯示，四個模型的歷史倍數都用還原價）。

@@ -73,6 +73,17 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python scripts/validate_valuations.py
 
+      # 未還原的資本事件普查（減資／分割／換發不走除權除息公告，兩條還原路徑都接不到）。
+      # 上一支的 C 段只掃近 30 天——2016~2025 的股價是週採樣，10% 漲跌幅門檻在
+      # 週區間失去意義，歷史存量抓不到。本支改用「股本變動 × 價格反比跳動」交叉確認，
+      # 不受採樣頻率影響。結果寫入 unadjusted_capital_events，前端據此排除排行榜。
+      # 耗時約 5 分鐘（要載入候選股全歷史價格），故排在所有檢查之後。
+      - name: 未還原資本事件普查
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/audit_capital_events.py
+
       - name: 驗證失敗 Email 通知
         if: failure()
         uses: dawidd6/action-send-mail@v3

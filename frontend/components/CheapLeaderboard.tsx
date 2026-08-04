@@ -15,9 +15,36 @@ const RATIO_COLS: Record<string, [string, string, string] | null> = {
   pfcf: null,
 }
 
+/**
+ * 有未還原資本事件的股票（減資／分割／換發未被還原，見 schema.sql）。
+ *
+ * 這些股票的歷史估值帶在事件那一點就斷了，目標價是拿兩套股數基準算出來的，
+ * 方向固定：減資使目標價偏低、分割與增資使目標價偏高而衝上便宜榜。
+ * 與 unofficial_adjustments 不同——那個標的是「還原沒有官方背書」的曝險
+ * （97% 偏差 <5%，只標不篩）；這個是【已經用兩個獨立證據確認】的事實，
+ * 所以要真的排除出推薦與排行榜。個股頁仍照常顯示，那是查詢不是推薦。
+ *
+ * 清單只有百餘支，一次查詢即可；不在 valuations 放同步欄位，
+ * 免得多一個「稽核腳本沒跑就是舊值」的失效點。
+ */
+async function fetchUnadjusted(db: ReturnType<typeof getSupabase>): Promise<Set<string>> {
+  const out = new Set<string>()
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await db.from('unadjusted_capital_events')
+      .select('stock_id').order('stock_id').range(offset, offset + PAGE - 1)
+    // 故障要拋出，不可吞成空集合：那會讓這些股票默默回到榜上（同 fetchModel）
+    if (error) throw new Error(`未還原資本事件查詢失敗：${error.message}`)
+    if (!data) break
+    data.forEach(r => out.add(r.stock_id as string))
+    if (data.length < PAGE) break
+  }
+  return out
+}
+
 async function fetchModel(
   db: ReturnType<typeof getSupabase>,
-  model: 'pe' | 'pb' | 'ps' | 'pfcf'
+  model: 'pe' | 'pb' | 'ps' | 'pfcf',
+  excluded: Set<string>
 ): Promise<LeaderboardRow[]> {
   const statusCol = model === 'pe' ? 'status' : `${model}_status`
   const priceCol  = model === 'pe' ? 'cheap_price' : `${model}_cheap_price`
@@ -74,6 +101,10 @@ async function fetchModel(
     stocks:           r.stocks as { name: string; industry: string; market: string } | null,
   }))
 
+  // 未還原的資本事件：估值帶跨著兩套股數基準，目標價本身就是錯的，
+  // 四個模型皆受影響（歷史倍數都用還原價），故不分模型一律排除
+  rows = rows.filter(r => !excluded.has(r.stock_id))
+
   if (model === 'pe') {
     rows = rows.filter(r => !isPeUnreliable(r))
   }
@@ -129,7 +160,8 @@ async function fetchYields(db: ReturnType<typeof getSupabase>) {
   return { yields, threshold: sorted.length ? quantile(sorted, HIGH_YIELD_PCTILE) : Infinity }
 }
 
-async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<LeaderboardRow[]> {
+async function fetchConsensus(db: ReturnType<typeof getSupabase>,
+                              excluded: Set<string>): Promise<LeaderboardRow[]> {
   const fields = [
     'stock_id', 'current_price',
     'status', 'cheap_price', 'pe_reliable', 'pe_deep_discount', 'warning', 'nonop_warning',
@@ -162,6 +194,9 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
   const rows: LeaderboardRow[] = []
 
   for (const r of all) {
+    // 未還原的資本事件：目標價跨著兩套股數基準，共識榜同樣不該收
+    // （否則它會繞過單模型榜的過濾從這裡進來，同 pb_reliable 的處理）
+    if (excluded.has(r.stock_id as string)) continue
     const warning = (r.warning as string | null) ?? null
 
     // P/E 需額外排除不可靠警告（獲利高峰／長期偏低／業外虛胖）
@@ -233,12 +268,15 @@ async function fetchConsensus(db: ReturnType<typeof getSupabase>): Promise<Leade
 
 export default async function CheapLeaderboard() {
   const db = getSupabase()
+  // 先取排除清單：它要餵給所有榜單，且必須在 slice(TOP_N) 之前生效，
+  // 否則被排除的名額會在榜上留下空位而非由後面遞補
+  const excluded = await fetchUnadjusted(db)
   const [pe, pb, ps, pfcf, consensus, yieldData] = await Promise.all([
-    fetchModel(db, 'pe'),
-    fetchModel(db, 'pb'),
-    fetchModel(db, 'ps'),
-    fetchModel(db, 'pfcf'),
-    fetchConsensus(db),
+    fetchModel(db, 'pe', excluded),
+    fetchModel(db, 'pb', excluded),
+    fetchModel(db, 'ps', excluded),
+    fetchModel(db, 'pfcf', excluded),
+    fetchConsensus(db, excluded),
     fetchYields(db),
   ])
 
