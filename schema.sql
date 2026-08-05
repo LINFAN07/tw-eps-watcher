@@ -539,3 +539,20 @@ CREATE TABLE IF NOT EXISTS unadjusted_capital_events (
   detected_at  DATE           NOT NULL,  -- 本列由哪一次普查產生
   PRIMARY KEY (stock_id, event_date)
 );
+
+-- 可否直接補還原（2026-08-05，B 案）
+--
+-- product = 價格比 × 股數比，資本事件應接近 1。偏離 1 的部分是【事件當週的
+-- 真實市場波動】，不是誤差——所以還原因子一律用 1 / share_ratio（來自財報的
+-- 資本事件真實幅度），不可用 1 / price_ratio：後者會把真實波動一起消掉，
+-- 那是竄改市場資料。
+--
+-- 但 product 偏離越大，「這個跳空確實由該次股本變動造成」的信心就越低
+-- （可能是配對錯了，或股本資料不精確），補上去反而引入新錯誤。
+-- 故只修正 0.9~1.1 這一段（68/121 筆，56%），其餘 53 筆維持排除出排行榜。
+--
+-- 用生成欄位而非在程式裡各判一次：前端 exRights.ts、後端 ex_factors.py、
+-- 排行榜過濾三處都要用同一個門檻，散在三處必然漂移。
+ALTER TABLE unadjusted_capital_events
+  ADD COLUMN IF NOT EXISTS adjustable BOOLEAN
+  GENERATED ALWAYS AS (product >= 0.9 AND product <= 1.1) STORED;

@@ -16,22 +16,26 @@ const RATIO_COLS: Record<string, [string, string, string] | null> = {
 }
 
 /**
- * 有未還原資本事件的股票（減資／分割／換發未被還原，見 schema.sql）。
+ * 資本事件【無法修正】的股票（見 schema.sql 的 unadjusted_capital_events）。
  *
- * 這些股票的歷史估值帶在事件那一點就斷了，目標價是拿兩套股數基準算出來的，
- * 方向固定：減資使目標價偏低、分割與增資使目標價偏高而衝上便宜榜。
- * 與 unofficial_adjustments 不同——那個標的是「還原沒有官方背書」的曝險
- * （97% 偏差 <5%，只標不篩）；這個是【已經用兩個獨立證據確認】的事實，
- * 所以要真的排除出推薦與排行榜。個股頁仍照常顯示，那是查詢不是推薦。
+ * 減資／分割／換發不走除權除息公告，兩條還原路徑都接不到，歷史估值帶會在
+ * 事件那一點斷開，目標價是拿兩套股數基準算出來的。
  *
- * 清單只有百餘支，一次查詢即可；不在 valuations 放同步欄位，
- * 免得多一個「稽核腳本沒跑就是舊值」的失效點。
+ * 其中 product 落在 0.9~1.1 者（adjustable）已由 factor = 1 ÷ share_ratio
+ * 補上還原（見 lib/exRights.ts），估值帶已修好，故【不再排除】。
+ * 這裡只取 adjustable = false 那批——product 偏離越大，「跳空確實由該次股本
+ * 變動造成」的信心越低，補上去反而引入新錯誤，只能繼續擋著。
+ *
+ * 與 unofficial_adjustments 不同：那個標的是「還原沒有官方背書」的曝險
+ * （97% 偏差 <5%，只標不篩）；這個是兩個獨立證據確認的事實，要真的排除。
+ * 個股頁仍照常顯示，那是查詢不是推薦。
  */
 async function fetchUnadjusted(db: ReturnType<typeof getSupabase>): Promise<Set<string>> {
   const out = new Set<string>()
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await db.from('unadjusted_capital_events')
-      .select('stock_id').order('stock_id').range(offset, offset + PAGE - 1)
+      .select('stock_id').eq('adjustable', false)
+      .order('stock_id').range(offset, offset + PAGE - 1)
     // 故障要拋出，不可吞成空集合：那會讓這些股票默默回到榜上（同 fetchModel）
     if (error) throw new Error(`未還原資本事件查詢失敗：${error.message}`)
     if (!data) break

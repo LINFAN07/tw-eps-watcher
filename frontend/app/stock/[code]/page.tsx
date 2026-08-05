@@ -63,7 +63,7 @@ async function fetchStock(code: string) {
     // 個股頁照常顯示該股與數字——那是查詢不是推薦（同 pe_reliable 的處理），
     // 但要讓使用者知道這條帶斷在哪一天。
     db.from('unadjusted_capital_events')
-      .select('event_date,share_ratio').eq('stock_id', code).order('event_date'),
+      .select('event_date,share_ratio,adjustable').eq('stock_id', code).order('event_date'),
   ])
   const eps8 = epsRes.data ?? []
   // 同業資料要等 stock 查完才知道產業，故獨立於上面的 Promise.all

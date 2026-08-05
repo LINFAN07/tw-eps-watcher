@@ -235,9 +235,9 @@ export default function ValuationCard({
   asOf?: AsOf
   /** 使用者從哪個模型的排行榜點進來（?model=pb）。有值時預設顯示該模型。 */
   fromModel?: string
-  /** 未還原的資本事件（見 schema.sql unadjusted_capital_events）。
-   *  有值代表估值帶跨了兩套股數基準，目標價不可採用。 */
-  capitalEvents?: { event_date: string; share_ratio: number | string }[]
+  /** 資本事件（見 schema.sql unadjusted_capital_events）。
+   *  adjustable 者已依股數比補上還原，其餘代表估值帶仍跨著兩套股數基準。 */
+  capitalEvents?: { event_date: string; share_ratio: number | string; adjustable: boolean }[]
 }) {
   const recommended = getRecommendedModel(industry, v)
   // 從排行榜點進來時，先顯示使用者剛才在看的那個模型。
@@ -294,6 +294,10 @@ export default function ValuationCard({
   // 還原資料來源註記（四個模型的歷史倍數都用還原價，故不分模型）
   const adjNotice = adjustmentNotice(v)
 
+  // 資本事件依「補得回來與否」分流，兩者的訊息語意相反，不可混在一起顯示
+  const fixedEvents  = capitalEvents.filter(e => e.adjustable)
+  const brokenEvents = capitalEvents.filter(e => !e.adjustable)
+
   const prevTTM = prevYearQuarters.length === 4
     ? prevYearQuarters.reduce((s, q) => s + q.eps, 0)
     : null
@@ -324,17 +328,31 @@ export default function ValuationCard({
           <span>{v.capital_change_warning}</span>
         </div>
       )}
-      {/* 未還原的資本事件（減資／分割／換發）：與上面的灰標不同，這個是
-          【已用兩個獨立證據確認】的錯誤，不是曝險——估值帶在事件那一點跨了
-          兩套股數基準，目標價本身就是錯的。故用紅色，且該股已排除出排行榜。 */}
-      {capitalEvents.length > 0 && (
+      {/* 資本事件（減資／分割／換發）分兩種呈現，語意完全不同：
+          能修的已用 factor = 1 ÷ 股數比補上還原，估值帶已接回去 → 中性藍；
+          修不了的（product 偏離 1 太多，見 schema.sql）目標價仍跨著兩套
+          股數基準 → 紅色，且該股續留排除清單。 */}
+      {fixedEvents.length > 0 && (
+        <div className="flex gap-2 items-start bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 mb-4 text-sm text-sky-800">
+          <span className="mt-0.5 shrink-0">🔧</span>
+          <span>
+            歷史上有 {fixedEvents.length} 次減資或分割未被交易所的除權息公告涵蓋（
+            {fixedEvents.map(e =>
+              `${e.event_date} 股數 ×${Number(e.share_ratio).toFixed(2)}`).join('、')}
+            ），<strong className="font-semibold">已依股數變動還原</strong>，
+            下方估值帶已換算到同一個股數基準。
+          </span>
+        </div>
+      )}
+      {brokenEvents.length > 0 && (
         <div className="flex gap-2 items-start bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4 text-sm text-red-800">
           <span className="mt-0.5 shrink-0">⛔</span>
           <span>
-            偵測到 {capitalEvents.length} 次未還原的資本事件（
-            {capitalEvents.map(e =>
+            偵測到 {brokenEvents.length} 次無法還原的資本事件（
+            {brokenEvents.map(e =>
               `${e.event_date} 股數 ×${Number(e.share_ratio).toFixed(2)}`).join('、')}
-            ）。該時點前後的歷史股價基準不同，下方的估值帶與目標價
+            ）——價格跳動幅度與股數變動對不上，無法判定該用多少倍率還原。
+            該時點前後的歷史股價基準不同，下方的估值帶與目標價
             <strong className="font-semibold">不可採用</strong>；
             本股已排除出便宜排行榜與推薦。
           </span>
