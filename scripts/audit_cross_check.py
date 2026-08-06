@@ -78,28 +78,32 @@ def close(a: float | None, b: float | None) -> bool:
 
 def check_ttm_eps(sid: str, v: dict) -> str | None:
     """
-    ttm_eps 應等於近四季 EPS 相加（半年報公司用兩期）。
+    ttm_eps 應等於「剛好涵蓋 12 個月」的那幾期 EPS 相加。
 
-    期數一律問 periodicity.report_window()——它只看最近 6 期。
+    視窗一律問 periodicity.ttm_periods()，與計算端同一支函式。
     這裡原本自己判「全歷史月份是否都落在 6/12」，一筆陳年異常期別就會把整支
     股票誤判成季報：2026-07-27 實例 6775 穎台科技，14 期裡只有 2020-09-30 一筆
     例外，稽核便用 4 期相加 -5.61 去比對正確的 2 期值 -4.91，報出假 critical。
-    計算端與稽核端的回看期數必須相同，否則兩邊對同一支股票給出不同答案。
+    改用 report_window 之後仍不夠——它給的是頻率標籤，答不了「哪幾期是 12 個月」，
+    公司改頻率時計算端與稽核端會各自取到不同的期別（2026-08-06，39 檔）。
+    兩端必須呼叫同一支函式，這不是約定而是機制。
     """
     rows = _paged("eps_quarterly", "quarter_end_date,eps", sid)
     if len(rows) < 2 or v.get("ttm_eps") is None:
         return None
-    w = periodicity.report_window(r["quarter_end_date"] for r in rows)
-    if len(rows) < w:
-        return None
-    recalc = sum(float(r["eps"]) for r in rows[-w:])
+    window = periodicity.ttm_periods(r["quarter_end_date"] for r in rows)
+    if window is None:
+        # 稽核端湊不出視窗，計算端卻寫了值 → 那才是問題
+        return f"ttm_eps {v['ttm_eps']} 有值，但期別湊不出完整 12 個月"
+    recalc = sum(float(r["eps"]) for r in rows if r["quarter_end_date"] in window)
     stored = float(v["ttm_eps"])
     # 一次性收益偵測會把離群季 cap 掉，故存的值可能【低於】相加值，那是正常的；
     # 只有「明顯高於」才是問題。用差值判斷，不可寫成 recalc * (1 + TOLERANCE)——
     # 負數乘以大於 1 的係數會變得更小，判斷方向會反過來（首版即因此全是誤報）。
     margin = max(ABS_TOLERANCE, abs(recalc) * TOLERANCE)
     if stored - recalc > margin:
-        return f"ttm_eps {stored} 高於近 {w} 季相加 {recalc:.2f}"
+        return (f"ttm_eps {stored} 高於 TTM 視窗 "
+                f"（{window[0]}~{window[-1]}，{len(window)} 期）相加 {recalc:.2f}")
     return None
 
 

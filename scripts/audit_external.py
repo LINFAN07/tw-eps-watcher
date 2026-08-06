@@ -90,7 +90,18 @@ REVENUE_ENDPOINTS = [
 
 # 容許誤差。四捨五入與申報時點差異不算問題，但單位錯（1000 倍）、
 # 累計誤用（Q2 起約 2 倍）、面額錯（10 倍）遠超此值，必被抓出。
-EPS_TOLERANCE = 0.02      # 元（EPS 是交易所直接申報的數字，可要求逐筆相符）
+# EPS 容差：絕對 0.05 元與相對 1% 取大者。
+#
+# 原本是 0.02 元、註解寫「EPS 是交易所直接申報的數字，可要求逐筆相符」——
+# 那個前提在「單季 vs 單季」時成立。2026-08-06 確認官方是**年初至今累計**後，
+# 比對變成「我們兩季相加 vs 官方一個累計值」，多出兩種合法誤差：
+#   1. 兩個各自四捨五入到小數第 2 位的值相加，誤差可達 0.015
+#   2. 每季 EPS 用該季加權平均股數，累計期用累計加權平均股數。期間增資的公司
+#      兩者本來就不相等（3006 晶豪科股數 286,172→297,741 千股，差 0.5%）
+# 實測 94 筆的差距分布有明顯斷點：87 筆 ≤0.02，其餘落在 0.03~0.05，
+# 然後跳到 0.14。門檻取在斷點上，不是取在「剛好全綠」。
+EPS_TOLERANCE = 0.05      # 元
+EPS_TOLERANCE_REL = 0.01  # 相對，大額 EPS 的加權股數效應以此吸收
 PRICE_TOLERANCE = 0.01    # 元（除權息參考價由公式決定，可要求相符）
 
 # 每股淨值改用相對誤差，且門檻放寬到 5%。理由：交易所的「每股參考淨值」
@@ -294,6 +305,52 @@ def db_values(table: str, col: str, quarters: set) -> dict:
         offset += 1000
 
 
+def db_values_ytd(table: str, col: str, quarters: set) -> dict:
+    """
+    {(股票代號, 季末日): 該會計年度累計值}——把我們的單季值加總到與官方同基準。
+
+    **交易所綜合損益表的每股盈餘是「年初至今累計」**：2026-06-30 那筆是 Q1+Q2，
+    不是 Q2 單季。2026-08-06 逐筆驗證 6 檔，Q1+Q2 與官方值分毫不差
+    （2454 聯發科 15.17+15.28=30.45 vs 官方 30.44）。CLAUDE.md 原本記載
+    「損益表 OpenAPI 疑為累計揭露」，至此確認。
+
+    為什麼拖到現在才發現：A 段 2026-07-22 上線後，交易所端點一直停在 2026-03-31，
+    而 **Q1 的累計值恰好等於單季值**，所以一路綠燈。Q2 財報一發布就整批誤報
+    「我們的值只有官方的一半」。**只在單一期別上驗證過的規則，等於沒驗證過**。
+
+    半年報公司自然成立：他們的 2026-06-30 是該年度第一期，同年度累計就是它自己。
+    若我們真的缺了 Q1，加總會少一塊而被判為不符——那是我們該知道的缺口，不是誤報。
+    """
+    by_year: dict[tuple[str, str], list[tuple[str, float]]] = {}
+    offset = 0
+    lo = min(f"{q[:4]}-01-01" for q in quarters)
+    while True:
+        rows = (supabase.table(table).select(f"stock_id,quarter_end_date,{col}")
+                .gte("quarter_end_date", lo).lte("quarter_end_date", max(quarters))
+                .order("stock_id").order("quarter_end_date")
+                .range(offset, offset + 999).execute().data)
+        for r in rows:
+            if r[col] is not None:
+                key = (r["stock_id"], r["quarter_end_date"][:4])
+                by_year.setdefault(key, []).append((r["quarter_end_date"], float(r[col])))
+        if len(rows) < 1000:
+            break
+        offset += 1000
+
+    out = {}
+    for (sid, year), records in by_year.items():
+        present = {q for q, _ in records}
+        for quarter in quarters:
+            # 沒抓到當期就是「無對應」，不可拿前幾季湊一個累計值——那會把
+            # 「我們還沒下載」偽裝成「我們的值不對」。2026-08-06 首版即如此：
+            # Q2 申報截止日（8/14）未到，223 家已提早申報、我們只有 90 家，
+            # 其餘 133 家被拿 Q1 單獨去比官方的 H1，整批誤報為不符。
+            if quarter[:4] != year or quarter not in present:
+                continue
+            out[(sid, quarter)] = sum(v for q, v in records if q <= quarter)
+    return out
+
+
 def coverage_problem(official: dict, pending: set, due_checked: int, what: str) -> list[str]:
     """涵蓋率門檻。「資料庫整批沒寫進去」必須是失敗，不能因為「沒有不符」而通過——
     官方回 1,079 筆、我們 0 筆時 checked=0、bad=[]，舊版會印「✅ 全部一致」並
@@ -314,15 +371,18 @@ def coverage_problem(official: dict, pending: set, due_checked: int, what: str) 
             f"——多半是某次下載整批沒寫入，而非數值錯誤"]
 
 
-def compare(official: dict, table: str, col: str,
-            tol: float, relative: bool = False) -> tuple[list[str], list[str]]:
+def compare(official: dict, table: str, col: str, tol: float, relative: bool = False,
+            fetch=None, rel_floor: float = 0.0) -> tuple[list[str], list[str]]:
     """逐筆比對官方值與資料庫值。回傳（逐筆不符清單, 涵蓋率問題）。
 
     兩者分開回傳，是因為 check_bvps 會用「不符佔比」豁免逐筆差異，
     但涵蓋率（整批漏寫）不在可豁免之列——混在一起就會被那個門檻吞掉。
+
+    fetch 決定我們這邊怎麼取值：流量型指標（EPS）要用 db_values_ytd 換成
+    年度累計才與官方同基準；存量型（每股淨值）用預設的 db_values 逐筆取即可。
     """
     quarters = {q for _, q in official}
-    ours = db_values(table, col, quarters)
+    ours = (fetch or db_values)(table, col, quarters)
 
     # 申報中的季別（截止日＋寬限期還沒到）不計入涵蓋率，但數值照比
     today = date.today()
@@ -337,7 +397,10 @@ def compare(official: dict, table: str, col: str,
         checked += 1
         due_checked += key[1] not in pending
         diff = abs(mine - theirs)
-        limit = abs(theirs) * tol if relative else tol
+        # rel_floor：絕對容差之外再給一個相對下限，兩者取大。EPS 用它吸收
+        # 「累計加權股數 vs 單季加權股數」的合法差異——那個誤差隨 EPS 大小等比放大，
+        # 固定的絕對門檻對大額 EPS 太嚴、對小額 EPS 太鬆。
+        limit = abs(theirs) * tol if relative else max(tol, abs(theirs) * rel_floor)
         if diff > limit:
             bad.append(f"{key[0]} {key[1]}：我們 {mine} vs 交易所 {theirs}"
                        f"（差 {mine - theirs:+.2f}）")
@@ -364,7 +427,9 @@ def compare(official: dict, table: str, col: str,
 def check_eps() -> list[str]:
     print("\n=== A. 每股盈餘（綜合損益表 vs eps_quarterly）===")
     official = official_values(INCOME_ENDPOINTS, ("基本每股盈餘（元）",))
-    bad, coverage = compare(official, "eps_quarterly", "eps", EPS_TOLERANCE)
+    # 官方是年初至今累計，我們存單季，故取值端換成同基準（見 db_values_ytd）
+    bad, coverage = compare(official, "eps_quarterly", "eps", EPS_TOLERANCE,
+                            fetch=db_values_ytd, rel_floor=EPS_TOLERANCE_REL)
     return bad + coverage
 
 
@@ -400,9 +465,16 @@ def check_bvps() -> list[str]:
     return bad + coverage
 
 
+def _quarter_span(newer: str, older: str) -> int:
+    """兩個期末日之間橫跨幾季（含頭含尾）。純季報的最近 4 期為 4，半年報為 8"""
+    def q(d):
+        return int(str(d)[:4]) * 4 + (int(str(d)[5:7]) - 1) // 3
+    return q(newer) - q(older) + 1
+
+
 def check_ttm_window() -> list[str]:
     """
-    半年報公司的 ttm_eps 不得等於「最近 4 期加總」——那是兩年的獲利。
+    ttm_eps 不得等於「最近 4 期加總」——當那 4 期橫跨超過 12 個月時。
 
     為什麼要獨立一段：A 段拿交易所的單季申報值逐筆比對，只證明「每一季的
     EPS 都對」，證明不了「把它們加起來的方式對」。2026-07-22 事故正是如此——
@@ -448,26 +520,31 @@ def check_ttm_window() -> list[str]:
         ttm = vals.get(sid)
         if ttm is None or len(recs) < 4:
             continue
-        # 回看期數必須與 calculate_valuation._eps_window 一致，否則兩邊
-        # 對同一支股票會給出不同答案（2026-07-22 曾因一邊 8 期、一邊 6 期而誤報）
         recent = sorted(recs, reverse=True)[:LOOKBACK]
-        # 用共用判定，不要自己寫——這裡原本是 `months > {6,12}` 想表達
-        # 「不是子集就跳過」，但 `>` 是真超集：{3,6,9} > {6,12} 為 False，
-        # 於是季報公司沒被跳過、被當半年報驗算而誤報紅燈。
-        # 那是這個概念的第五份實作，正是 periodicity.py 要消滅的東西。
-        if periodicity.report_window(d for d, _ in recent) != 2:
-            continue                                  # 季報公司，本段不適用
+        if len(recent) < 4:
+            continue
+        # 觸發條件刻意【不】呼叫 periodicity：本段的價值就在於它用另一個角度看同一件事。
+        # 最近 4 期橫跨超過 4 季 → 這 4 期加總必然超過 12 個月，ttm_eps 不該等於它。
+        # 這同時涵蓋純半年報（橫跨 8 季）與半年報轉季報（橫跨 5~7 季）兩種病徵；
+        # 原本的 `report_window(...) != 2` 只擋得住前者，2026-08-06 那 39 檔
+        # 轉換期公司在這裡會被判成季報而整批跳過——D 段對它們完全沒有反應。
+        span = _quarter_span(recent[0][0], recent[3][0])
+        if span <= 4:
+            continue                                  # 純季報，本段不適用
         checked += 1
         four = sum(e for _, e in recent[:4])
-        two = sum(e for _, e in recent[:2])
-        if abs(two) < 0.01 or abs(four) < 0.01:
+        if abs(four) < 0.01:
             continue                                  # 接近 0，比值無意義
-        near_four = abs(float(ttm) - four) / abs(four) < 0.02
-        differs = abs(four - two) / abs(two) > 0.20
-        if near_four and differs:
-            bad.append(f"{sid}：ttm_eps={ttm} 等於最近 4 期加總（兩年），"
-                       f"應為 2 期加總 {two:.2f}")
-    print(f"  半年報公司 {checked} 檔，TTM 誤用 4 期 {len(bad)} 檔")
+        # 參考值（該是多少）借用共用函式，但那只用於訊息文字，不參與觸發判定
+        window = periodicity.ttm_periods(d for d, _ in recs)
+        correct = sum(e for d, e in recs if window and d in window)
+        if window and abs(correct) >= 0.01 and abs(four - correct) / abs(correct) <= 0.20:
+            continue                                  # 兩者本來就接近，判不出來也無害
+        if abs(float(ttm) - four) / abs(four) < 0.02:
+            should = f"{correct:.2f}（{window[0]}~{window[-1]}）" if window else "無（湊不出 12 個月）"
+            bad.append(f"{sid}：ttm_eps={ttm} 等於最近 4 期加總，"
+                       f"但那 4 期橫跨 {span} 季（>12 個月），應為 {should}")
+    print(f"  最近 4 期橫跨超過 12 個月者 {checked} 檔，TTM 誤用 4 期 {len(bad)} 檔")
     # 全市場向來有約 190~300 檔半年報公司；驗到 0 檔代表 eps_quarterly
     # 或 valuations 沒讀到資料，不是「大家都正確」
     if checked == 0:

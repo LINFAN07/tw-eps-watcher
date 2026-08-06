@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from price_adjust import back_adjust
-from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
+from periodicity import ttm_windows   # TTM 視窗的單一來源
 from calculate_alt_valuations import decumulate  # 現金流去累計：與生產同一份實作，不另寫
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -247,14 +247,21 @@ def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
         df = df.sort_values(["stock_id", "quarter_end_date"])
 
     if ttm_window is not None:
-        # 興櫃為半年報（月份只有 6、12），4 期會誤把 2 年當 TTM，改用 2 期。
-        # 2026-07-22：原本這裡看「全部歷史」的月份集合，一筆陳年 3/31 就會把
-        # 半年報公司誤判成季報——那正是當天在生產路徑修掉的缺陷，回測卻漏改。
+        # 加總「剛好涵蓋 12 個月」的期別，一律用 periodicity.ttm_windows。
+        #
+        # 這裡被同一個概念修過三次，每次都是因為回測與生產路徑各寫一份：
+        # 2026-07-22 原本看「全部歷史」的月份集合，一筆陳年 3/31 就把半年報公司
+        # 誤判成季報（生產端當天修掉、回測漏改）；改用 report_window 之後仍不夠，
+        # 因為它給的是頻率標籤，答不了「哪幾期剛好是 12 個月」——公司改頻率時
+        # rolling(w) 會加總 15~21 個月（2026-08-06，39 檔）。
         # 回測是所有旗標門檻（pb_reliable 2 倍、pe_deep_discount 3 倍、帶寬分位）
-        # 的依據，用錯 TTM 等於門檻建在污染的樣本上。改用共用判定。
+        # 的依據，用錯 TTM 等於門檻建在污染的樣本上。
         def ttm(g):
-            w = report_window(g["quarter_end_date"])
-            return g[value_col].rolling(w, min_periods=w).sum()
+            windows = ttm_windows(g["quarter_end_date"])
+            by_period = dict(zip(g["quarter_end_date"], g[value_col]))
+            return pd.Series(
+                [sum(by_period[p] for p in windows[q]) if windows.get(q) else float("nan")
+                 for q in g["quarter_end_date"]], index=g.index)
         df["value"] = df.groupby("stock_id", group_keys=False).apply(ttm)
     else:
         df["value"] = df[value_col]
@@ -365,12 +372,58 @@ def forward_returns(adj: pd.DataFrame, h: int, mask: pd.DataFrame | None = None)
     return df.dropna()
 
 
+def build_panels(data: dict) -> dict:
+    """
+    把 load_all() 的原始資料組裝成回測用的月末面板，供 main() 與各衛星腳本共用。
+
+    這段組裝原本在每個腳本各抄一份。任何一個 matrix 函式往後加了參數
+    （面額修正、股數因子邏輯調整），漏改的那份不會報錯，只會安靜地跑出舊行為
+    ——與 report_window 那次同型的坑，故收斂成單一入口。
+    """
+    dates = data["dates"]
+    # 分母也要換算到最新股數基準，否則與「已除權還原的股價」基準不一致
+    factors = share_factor_table(data["bvps"])
+    # P/S、P/FCF 的每股基準用當前股數（常數）換算，見 per_share 說明
+    shares = pd.to_numeric(data["stocks"].set_index("stock_id")["listed_shares"], errors="coerce")
+    shares_divisor = (shares * 1000).where(shares > 0)
+    return {
+        "adj":     adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates),
+        "factors": factors,
+        "eps_ttm": fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors),
+        "bvps":    fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors),
+        "ps":      revenue_ttm_ps_matrix(data["revenue"],   shares_divisor, dates),
+        "pfcf":    fcf_ttm_ps_matrix(data["cashflows"], shares_divisor, dates),
+    }
+
+
+def percentile_mask(adj: pd.DataFrame, base: pd.DataFrame, lo: float, hi: float,
+                    pct: float, side: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    「現價相對自己的歷史倍數帶」的訊號面板，以及每格離目標價多遠的比值。
+
+    base = 估值基準值面板（P/E 用 TTM EPS，P/B 用每股淨值）。
+    side='cheap'     → 現價 ≤ 第 pct 百分位推得的價格，比值 = 目標價 ÷ 現價（折價倍數）
+    side='expensive' → 現價 ≥ 第 pct 百分位推得的價格，比值 = 現價 ÷ 目標價（溢價倍數）
+
+    兩個方向共用同一份實作是刻意的：便宜與昂貴只差分位數與比較方向，
+    分成兩份會在往後任一次修正時安靜地分岔——這個專案已經在 report_window
+    與 decumulate 兩處付過這個代價（回測與生產各持一份，漏改的那份照樣跑完）。
+    """
+    base = base.reindex(columns=adj.columns).where(base > 0)
+    mult = (adj / base).where(lambda m: (m >= lo) & (m <= hi))
+
+    # expanding：時點 T 的百分位只用 ≤T 的樣本，這是本回測不作弊的關鍵
+    target = base * mult.expanding(min_periods=MIN_SAMPLE).quantile(pct)
+    if side == "cheap":
+        return (adj <= target) & mult.notna(), target / adj
+    return (adj >= target) & mult.notna(), adj / target
+
+
 def cheap_mask(adj: pd.DataFrame, base: pd.DataFrame,
                lo: float, hi: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     「便宜」訊號的布林面板（列＝月末、欄＝股票），以及每格的折價倍數。
 
-    base = 估值基準值面板（P/E 用 TTM EPS，P/B 用每股淨值）。
     折價倍數 = 便宜價 ÷ 現價。訊號成立時必 ≥1，數字越大代表現價離便宜價越遠。
 
     為什麼要記錄它：這個比值極大時，多半不是「跌得很便宜」而是
@@ -378,13 +431,7 @@ def cheap_mask(adj: pd.DataFrame, base: pd.DataFrame,
     2026-07-22 實測 4763 材料-KY：淨值 10 年成長 8 倍、股價腰斬，
     歷史 P/B 從 39 倍掉到 2.3 倍，目標價因此算出 830 元（現價 50.3）。
     """
-    base = base.reindex(columns=adj.columns).where(base > 0)
-    mult = (adj / base).where(lambda m: (m >= lo) & (m <= hi))
-
-    # expanding：時點 T 的百分位只用 ≤T 的樣本，這是本回測不作弊的關鍵
-    cheap_mult = mult.expanding(min_periods=MIN_SAMPLE).quantile(PCT_CHEAP)
-    cheap_price = base * cheap_mult
-    return (adj <= cheap_price) & mult.notna(), cheap_price / adj
+    return percentile_mask(adj, base, lo, hi, PCT_CHEAP, "cheap")
 
 
 def backtest(model: str, adj: pd.DataFrame, base: pd.DataFrame,
@@ -482,17 +529,9 @@ def main():
     dates = data["dates"]
 
     print("組裝面板…")
-    adj = adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
-    # 分母也要換算到最新股數基準，否則與「已除權還原的股價」基準不一致
-    factors = share_factor_table(data["bvps"])
-    eps_ttm = fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors)
-    bvps    = fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors)
-
-    # P/S、P/FCF 的每股基準用當前股數（常數）換算，見 per_share 說明
-    shares = pd.to_numeric(data["stocks"].set_index("stock_id")["listed_shares"], errors="coerce")
-    shares_divisor = (shares * 1000).where(shares > 0)
-    ps_base   = revenue_ttm_ps_matrix(data["revenue"],   shares_divisor, dates)
-    pfcf_base = fcf_ttm_ps_matrix(data["cashflows"], shares_divisor, dates)
+    panels = build_panels(data)
+    adj, eps_ttm, bvps = panels["adj"], panels["eps_ttm"], panels["bvps"]
+    ps_base, pfcf_base = panels["ps"], panels["pfcf"]
 
     print(f"  月數 {len(dates)}（{dates[0]} ~ {dates[-1]}）、股票 {adj.shape[1]} 支")
 

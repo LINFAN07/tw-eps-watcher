@@ -18,7 +18,7 @@ from supabase import create_client
 import pandas as pd
 import numpy as np
 from price_adjust import back_adjust, unofficial_adjustments   # 除權息即時還原（不儲存，見 price_adjust.py）
-from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
+from periodicity import report_window, ttm_windows, ttm_periods   # TTM 視窗的單一來源
 import ex_factors                      # 除權息還原因子（整表快取，避免逐股查詢）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -179,7 +179,13 @@ def apply_share_factors(df: pd.DataFrame, value_col: str, factors: pd.DataFrame)
 
 
 def _eps_window(eps_df: pd.DataFrame) -> int:
-    """TTM 應加總的期數。判定邏輯與理由見 periodicity.report_window（四處共用）"""
+    """
+    一年有幾期（季報 4、半年報 2）。判定邏輯見 periodicity.report_window。
+
+    只剩 compute_normalized_eps 在用——它要的是「年化倍數」與「5 年等於幾期」，
+    那是頻率問題。**TTM 加總哪幾期不要用這個**，一律問 periodicity.ttm_periods：
+    頻率標籤答不了「哪幾期剛好是 12 個月」，公司改頻率時兩者會給出不同答案。
+    """
     return report_window(eps_df["quarter_end_date"])
 
 
@@ -213,13 +219,20 @@ def build_pe_series(eps_df: pd.DataFrame, price_df: pd.DataFrame,
     配套，否則分子分母基準不一致（見 share_factors）。
     """
     price_df = to_weekly(price_df)   # 時間權重必須均勻，見 to_weekly
-    w = _eps_window(eps_df)
     eps = eps_df.copy()
-    # 先逐季換算再滾動加總：每季 EPS 各自對應自己那一季的股數，
-    # 加總後即「近 w 季總獲利 ÷ 最新股數」，與現價的股數基準一致
+    # 先逐季換算再加總：每季 EPS 各自對應自己那一季的股數，
+    # 加總後即「12 個月總獲利 ÷ 最新股數」，與現價的股數基準一致
     eps["adj_eps"] = apply_share_factors(eps, "eps", factors) if factors is not None \
         else eps["eps"].astype(float)
-    eps["ttm_eps"] = eps["adj_eps"].rolling(w, min_periods=w).sum()
+    # 加總「剛好涵蓋 12 個月」的期別，不是 rolling(w) 的最近 w 列。
+    # 揭露頻率改變或期別有洞時，最近 w 列會橫跨 15~21 個月——2026-03 一批興櫃
+    # 轉上市櫃的公司就是這樣把 21 個月的獲利當成 TTM（見 periodicity 模組說明）。
+    windows = ttm_windows(eps["quarter_end_date"])
+    by_period = dict(zip(eps["quarter_end_date"], eps["adj_eps"].astype(float)))
+    eps["ttm_eps"] = [
+        sum(by_period[p] for p in windows[q]) if windows.get(q) else float("nan")
+        for q in eps["quarter_end_date"]
+    ]
     eps = eps.dropna(subset=["ttm_eps"])
 
     # 以「財報實際可得日」而非季末日對齊股價，否則歷史 P/E 會用到當時尚未公布的
@@ -260,14 +273,22 @@ def compute_normalized_eps(eps_df: pd.DataFrame) -> float | None:
 
 def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
     """
-    偵測最近一個 TTM 週期（季報 4 期 / 半年報 2 期）是否有疑似一次性收益。
+    偵測最近一個 TTM 週期是否有疑似一次性收益。
     使用 IQR 方法：上界 = Q75 + 2.5 × IQR（最小 IQR 為 0.5 避免零除）。
     若偵測到，將離群季度 cap 至上界後重算 TTM；否則回傳原始 TTM。
-    回傳 (normalized_ttm, warning_text or None)
+    回傳 (normalized_ttm, warning_text or None)；湊不出完整 12 個月時回 (None, None)。
+
+    期別一律問 periodicity.ttm_periods，不用 tail(w)。tail 取的是「最近 w 列」，
+    公司改變揭露頻率時那 w 列會橫跨 15~21 個月，加總出來的不是 TTM 而是 1.5~1.75 年
+    的獲利——寫進 ttm_eps 就是「以另一個指標頂替」（資料誠信原則第 2 條）。
     """
-    w        = _eps_window(eps_df)
+    window = ttm_periods(eps_df["quarter_end_date"])
+    if not window:
+        return None, None
+
     all_eps  = eps_df["eps"].astype(float)
-    recent_4 = eps_df.tail(w)["eps"].astype(float)
+    in_ttm   = eps_df["quarter_end_date"].isin(window)
+    recent_4 = eps_df.loc[in_ttm, "eps"].astype(float)
 
     q25, q75 = float(np.percentile(all_eps, 25)), float(np.percentile(all_eps, 75))
     iqr = max(q75 - q25, 0.5)
@@ -278,7 +299,7 @@ def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:
         return float(recent_4.sum()), None
 
     # 找出離群季度，組成警告文字
-    outlier_rows = eps_df.tail(w)[outlier_mask.values]
+    outlier_rows = eps_df.loc[in_ttm][outlier_mask.values]
     parts = [
         f"{row['quarter_end_date'].strftime('%Y-%m-%d')} EPS {row['eps']:.2f} 元"
         for _, row in outlier_rows.iterrows()
@@ -303,17 +324,14 @@ def facts_only_result(stock_id: str, eps_df: pd.DataFrame,
     為什麼不是「整列清空」：ttm_eps 是公司事實（近四季獲利），與 P/E 樣本
     夠不夠無關，前端還拿它算 ROE。連它一起清掉會讓 ROE 跟著消失。
 
-    期數守衛不可省：期數不足時 detect_nonrecurring 的 tail(w) 會把 3 季當成
-    4 季相加，寫進 ttm_eps 就是「以另一個指標頂替」。寧可留 null。
+    期數守衛已收進 detect_nonrecurring：它問 ttm_periods 拿實際期別，湊不出
+    完整 12 個月就回 None。原本這裡用 `len(eps_df) >= w` 擋，那是**列數**守衛——
+    列數夠不代表那幾列是連續的 12 個月，轉換期公司列數綽綽有餘卻湊不出 TTM。
     """
     if eps_df.empty:
         return None                      # 連事實都沒有，交給 run() 整列清除
 
-    w = _eps_window(eps_df)
-    if len(eps_df) >= w:
-        ttm_eps, warning = detect_nonrecurring(eps_df)
-    else:
-        ttm_eps, warning = None, None
+    ttm_eps, warning = detect_nonrecurring(eps_df)
     normalized_eps = compute_normalized_eps(eps_df)
 
     result = {
@@ -352,6 +370,9 @@ def calculate_valuation(stock_id: str) -> dict | None:
     )
 
     ttm_eps, warning = detect_nonrecurring(eps_df)
+    if ttm_eps is None:
+        # 湊不出完整 12 個月 → 沒有 TTM → P/E 模型不成立。EPS 事實照常寫回。
+        return facts_only_result(stock_id, eps_df, price_df)
     normalized_eps   = compute_normalized_eps(eps_df)
     # 現價與其來源日期必須取自同一列，兩者分開取容易在日後改動時失聯
     latest_price     = price_df.iloc[-1]

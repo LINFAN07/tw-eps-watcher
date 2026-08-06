@@ -21,7 +21,8 @@ from supabase import create_client
 import pandas as pd
 import numpy as np
 from price_adjust import back_adjust   # 除權息即時還原（不儲存，見 price_adjust.py）
-from periodicity import report_window   # 季報／半年報的期數判定（四處共用）
+from periodicity import (   # TTM 視窗的單一來源
+    ttm_windows, ttm_periods, ttm_month_window, ttm_months)
 import ex_factors                      # 除權息還原因子（整表快取，避免逐股查詢）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -248,16 +249,22 @@ def calculate_ps(stock_id: str, price_df: pd.DataFrame, current_price: float, li
 
     # 逐月計算 TTM 營收 per share → 搭配當月股價 → 歷史 P/S 序列
     # revenue 單位：元 / listed_shares 單位：千股 → rps = 元 / (千股×1000) = 元/股
+    #
+    # 視窗是「連續 12 個月」不是「最近 12 列」：月營收有缺月時取列會跨到更早的月份，
+    # 分母灌水、目標價虛高（2026-08-06 實測 4195 基米 +113.9%、3485 敘豐 +145.9%）。
+    rev_by_month = {r["year_month"][:7]: float(r["revenue"]) for _, r in rev_df.iterrows()}
     ps_series = []
 
-    for i in range(11, len(rev_df)):
-        ttm_rev = float(rev_df.iloc[i - 11: i + 1]["revenue"].sum())
-        rps     = ttm_rev / (listed_shares * 1000)
+    for i in range(len(rev_df)):
+        month_str = rev_df.iloc[i]["year_month"][:7]
+        window = ttm_month_window(rev_by_month, month_str)
+        if not window:
+            continue
+        rps = sum(rev_by_month[m] for m in window) / (listed_shares * 1000)
         if rps <= 0:
             continue
 
         # 找當月（YYYY-MM）的收盤價（月末最後一筆）
-        month_str    = rev_df.iloc[i]["year_month"][:7]
         month_prices = price_df[price_df["date"].str.startswith(month_str)]
         if month_prices.empty:
             nearby = price_df[price_df["date"] <= rev_df.iloc[i]["year_month"]]
@@ -271,8 +278,11 @@ def calculate_ps(stock_id: str, price_df: pd.DataFrame, current_price: float, li
         if PS_MIN <= ps <= PS_MAX:
             ps_series.append(ps)
 
-    # 同 P/FCF：基準值取「最新 12 個月」的 TTM 營收，不沿用迴圈殘留值
-    latest_rps = float(rev_df.iloc[-12:]["revenue"].sum()) / (listed_shares * 1000)
+    # 同 P/FCF：基準值取「最新一組完整 12 個月」的 TTM 營收，不沿用迴圈殘留值
+    latest_window = ttm_months(rev_by_month)
+    if not latest_window:
+        return {}
+    latest_rps = sum(rev_by_month[m] for m in latest_window) / (listed_shares * 1000)
 
     if len(ps_series) < 12 or latest_rps <= 0:
         return {}
@@ -323,22 +333,27 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
     # FCF = 營業現金流 + 資本支出（capex 為負值，加法等於扣除）
     cf_df["fcf"] = cf_df["operating_cf"] + cf_df["capex"]
 
-    # 期數與 P/E 共用同一份判定（先前這裡自寫一份且視窗是 8 期，與 6 期不同步）。
+    # 視窗一律問 periodicity.ttm_windows：加總「剛好 12 個月」的期別，不是最近 w 列。
+    # 這裡特別容易踩到——decumulate() 的規則是「該年度第 1 季直接採用，其餘減去
+    # 同年前一季，缺前一季則剔除」，所以 cf_df 天生就可能有洞，取列會跨到更早的年度。
+    # 2026-08-06 實測 8 檔受害，1805 寶徠的 TTM FCF 被灌水 774% 且正掛在便宜榜上。
     #
-    # 但要講清楚實際行為：半年報公司走不到這裡。上面的 decumulate() 規則是
-    # 「該年度第 1 季直接採用，其餘減去同年前一季，缺前一季則剔除」，
-    # 而半年報只有 6/30（第 2 季）與 12/31（第 4 季），兩者的「同年前一季」
-    # 都不存在 → 全數被剔除 → cf_df 變空 → 卡在 MIN_PFCF_QTRS 就 return {}。
-    # 也就是說【半年報公司一律沒有 P/FCF 估值】，w 在此實務上恆為 4。
-    # 這在資料誠信上是安全的（不給估值好過給錯的），但若日後要支援，
-    # 該修的是 decumulate()——半年報的 6/30 本身就是年初至今的第一期，
-    # 應直接採用、12/31 減 6/30——而不是改這裡的 w。
-    w = report_window(cf_df["quarter_end_date"])
+    # 順帶說明實際行為：半年報公司走不到這裡。半年報只有 6/30（第 2 季）與
+    # 12/31（第 4 季），兩者的「同年前一季」都不存在 → 全數被 decumulate 剔除
+    # → cf_df 變空 → 卡在 MIN_PFCF_QTRS 就 return {}。
+    # 也就是說【半年報公司一律沒有 P/FCF 估值】。這在資料誠信上是安全的
+    # （不給估值好過給錯的），若日後要支援，該修的是 decumulate()——
+    # 半年報的 6/30 本身就是年初至今的第一期，應直接採用、12/31 減 6/30。
+    windows = ttm_windows(cf_df["quarter_end_date"])
+    fcf_by_period = dict(zip(cf_df["quarter_end_date"], cf_df["fcf"].astype(float)))
 
     pfcf_series = []
 
-    for i in range(w - 1, len(cf_df)):
-        ttm_fcf = float(cf_df.iloc[i - w + 1: i + 1]["fcf"].sum())
+    for i in range(len(cf_df)):
+        window = windows.get(cf_df.iloc[i]["quarter_end_date"])
+        if not window:
+            continue
+        ttm_fcf = float(sum(fcf_by_period[p] for p in window))
         # 現金流量表單位為元；listed_shares 單位為千股
         # 元 ÷ (千股 × 1000) = 元/股
         fcf_ps  = ttm_fcf / (listed_shares * 1000)
@@ -355,10 +370,13 @@ def calculate_pfcf(stock_id: str, price_df: pd.DataFrame, current_price: float, 
         if PFCF_MIN <= pfcf <= PFCF_MAX:
             pfcf_series.append(pfcf)
 
-    # 基準值必須取「最新一季」的 TTM FCF，不能沿用迴圈中最後一個為正的舊季度，
-    # 否則近期 FCF 轉負的公司會用過期現金流算出目標價。
+    # 基準值必須取「最新一組完整 12 個月」的 TTM FCF，不能沿用迴圈中最後一個為正的
+    # 舊季度，否則近期 FCF 轉負的公司會用過期現金流算出目標價。
     # 最新 TTM FCF 為負代表 P/FCF 模型不適用，直接不給估值。
-    latest_fcf_ps = float(cf_df.iloc[-w:]["fcf"].sum()) / (listed_shares * 1000)
+    latest_window = ttm_periods(cf_df["quarter_end_date"])
+    if not latest_window:
+        return {}
+    latest_fcf_ps = float(sum(fcf_by_period[p] for p in latest_window)) / (listed_shares * 1000)
 
     if len(pfcf_series) < MIN_PFCF_QTRS or latest_fcf_ps <= 0:
         return {}
