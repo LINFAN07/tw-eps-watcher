@@ -128,7 +128,8 @@ def update_monthly_revenue(known: set[str]) -> int:
                 continue
             ym = roc_month_to_date(r.get("資料年月", ""))
             rev_k = to_number(r.get("營業收入-當月營收"))
-            if not ym or rev_k is None or rev_k < 0:
+            # 負營收不得過濾，理由見 download_monthly_revenue.download_stock_revenue()
+            if not ym or rev_k is None:
                 continue
             rows.append({
                 "stock_id":   sid,

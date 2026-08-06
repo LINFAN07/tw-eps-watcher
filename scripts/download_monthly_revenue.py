@@ -129,8 +129,13 @@ def download_stock_revenue(stock_id: str) -> int:
             rev_val    = int(float(str(revenue).replace(",", "")))
         except (TypeError, ValueError):
             continue
-        if rev_val < 0:
-            continue
+        # 負營收不得過濾。證券商的營業收入含金融資產評價損益、保險業含投資與避險
+        # 損益、建設業有退屋沖銷，單月為負是【真實申報值】不是髒資料。
+        # 2026-08-06 事故：這裡曾有 `if rev_val < 0: continue`，造成 16 檔的月營收
+        # 出現永久缺口（5864 致和證缺 35 個月、6027 德信缺 30 個月），
+        # 連帶讓營業利益率與 P/S 算不出來或算錯。9 檔證券商、2 檔保險、3 檔建設。
+        # 這是資料誠信原則第 3 條的鏡像——那條講「不得把缺值變成數字」，
+        # 這裡是把有效值變成缺值，同樣是拿判斷去覆蓋來源說的話。
         rows.append({
             "stock_id":   stock_id,
             "year_month": year_month,
@@ -186,7 +191,7 @@ def main():
         time.sleep(CALL_INTERVAL)
 
     print(f"\n✅ 完成，共寫入 {written_total} 筆月營收資料")
-    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
+    tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
 
 if __name__ == "__main__":

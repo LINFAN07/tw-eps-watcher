@@ -46,13 +46,22 @@ NO_SCHEDULE_OK = {
     "patch_peak_eps_warning.py":      "warning 欄位已由 calculate_valuation.py 產生",
     "patch_yield_valuation.py":       "yield_* 欄位已由 calculate_alt_valuations.py 產生",
     # 被其他腳本內部呼叫，不會出現在 workflow 的 `python xxx.py`
-    "download_monthly_revenue.py":    "由 update_fundamentals.py 內部呼叫",
+    # 2026-08-06 更正：原本寫「由 update_fundamentals.py 內部呼叫」，那是假的——
+    # update_fundamentals.py 自己走 OpenAPI，從未 import 這支。白名單宣稱了不存在的
+    # 涵蓋，於是唯一能回補歷史月營收的路徑就這樣沒有排程、也沒被稽核抓到，
+    # 直到 2026-08-06 查月營收缺口才發現。日常回補改由 backfill_revenue_gaps.py 負責。
+    "download_monthly_revenue.py":    "全量初始下載用；日常缺口回補由 backfill_revenue_gaps.py 負責（已掛 monthly_fundamentals.yml）",
     "backtest_roe_filter.py":         "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
     "backtest_margin_filter.py":      "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
     "backtest_badges.py":             "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
     "backtest_filter_compare.py":     "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
     # 一次性研究／檢驗，不維護任何欄位
     "backtest_quality.py":            "一次性產品決策回測（該不該做合理估值榜），不產出線上資料",
+    # 盲區：它算的是 schema.sql 兩個生成欄位的門檻依據（pe_deep_discount 3 倍、
+    # pb_reliable 2 倍），而那兩個常數是【手寫在 SQL 裡】的，沒有任何機制會在
+    # 回測結論改變時提醒重看。掛排程也無用——排程能重跑數字，不能改 SQL 常數。
+    # 改動 TTM／還原／樣本集合之後必須手動重跑並比對判讀條件（見腳本 docstring）。
+    "backtest_discount_bands.py":     "門檻校準用；結論為手寫進 schema.sql 的常數，非自動生成欄位",
     # 盲區：這支的結論寫進 lib/backtest.py 的 caveatFor() 是「手寫」的，
     # 資料再累積兩年後 P/S 的產業排名延續性可能翻掉，而沒有任何機制會提醒重跑。
     # 若哪天要把延續性判斷自動化，就必須把這支移出白名單、掛進 recalc_chain。

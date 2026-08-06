@@ -31,9 +31,37 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/update_fundamentals.py
 
+  # 交易所端點只回傳單月快照，某公司在當月批次缺席就永久補不回。
+  # FinMind 可回溯 10 年，是唯一的補救來源——這一步就是月營收的補漏機制。
+  # 必須排在 recalculate 之前：補完才重算，否則這個月的估值仍用有洞的資料。
+  backfill:
+    needs: update
+    runs-on: ubuntu-latest
+    timeout-minutes: 45   # 預設上限 300 支 × 6.5 秒 ≈ 33 分鐘
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install requests supabase python-dotenv
+
+      - name: 回補月營收缺口（FinMind）
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python scripts/backfill_revenue_gaps.py
+
   # 月營收是 P/S 的基準值，更新後需重算才會反映到網站
   recalculate:
-    needs: update
+    needs: backfill
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -55,6 +83,15 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/calculate_alt_valuations.py
+
+      # 利益率的分母是月營收，回補填平的缺口會讓原本算不出來的公司變成算得出來
+      # （2026-08-06：光是負營收被過濾掉那批就有 16 檔）。分子是季報，值本身
+      # 每季才變，但「能不能算」每月都可能變，故重算要跟著月營收走。
+      - name: 重算品質指標（TTM 營業利益率）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/calculate_quality_metrics.py
 
       - name: 排程失敗 Email 通知
         if: failure()
