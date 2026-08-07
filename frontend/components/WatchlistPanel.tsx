@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWatchlist } from '@/hooks/useWatchlist'
-import { EXPENSIVE_CAVEAT } from '@/lib/expensiveBacktest'
+import { expensiveCaveat } from '@/lib/expensiveBacktest'
 import { isPeUnreliable } from '@/lib/peReliability'
 
 interface WatchItem {
@@ -191,7 +191,7 @@ export default function WatchlistPanel() {
       <p className="text-[11px] text-gray-400 leading-relaxed pt-1">
         位置條顯示現價落在這支股票自己歷史估值帶的哪個位置，百分比為離便宜價的距離。
         {hasUnreliable && <><br />⚠ 者的歷史估值帶已不適用（獲利太小、劇烈波動或有一次性收益），位置條轉為灰階、僅供查詢，滑過看原因。</>}
-        {hasExpensive && <><br />{EXPENSIVE_CAVEAT}</>}
+        {hasExpensive && <><br />{expensiveCaveat()}</>}
       </p>
     </div>
   )

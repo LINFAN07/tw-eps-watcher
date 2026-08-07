@@ -140,6 +140,40 @@ def premium_bands(df: pd.DataFrame, premium: pd.DataFrame, base: pd.DataFrame,
     return pd.DataFrame([r for r in rows if r])
 
 
+def export_stats(overall: pd.DataFrame) -> None:
+    """
+    把 P/E 昂貴組的主要數字輸出成 frontend/lib/expensiveStats.ts。
+
+    為什麼要有這一步：`expensiveBacktest.ts` 的警語是**手寫**的（那是判斷，
+    不該自動生成），但它引用的數字必須追得上這支腳本。兩者之間原本沒有任何
+    同步機制——重跑後數字變了，手寫的那份不會跟著動，畫面上也看不出它已過期，
+    而 `audit_workflows.py` 只看「有沒有掛排程」，看不到這種過期。
+
+    做法沿用 `lib/qualityBacktest.isQualityInSync()`：機器產生的值放這裡，
+    手寫的值留在原處，前端比對兩者；不一致時**只拿掉那個數字**，
+    定義性的警語照常顯示（見 expensiveBacktest.expensiveCaveat 的說明）。
+    """
+    row = overall[(overall["組別"] == "P/E 昂貴") & (overall["horizon"] == MAIN_HORIZON)]
+    if row.empty:
+        print(f"  ⚠️  找不到 P/E 昂貴 {MAIN_HORIZON}m，未輸出 expensiveStats.ts")
+        return
+    r = row.iloc[0]
+
+    path = os.path.join(os.path.dirname(__file__), "..", "frontend", "lib", "expensiveStats.ts")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(
+            "// 由 scripts/backtest_expensive.py 產生，請勿手動編輯。重跑會覆寫此檔。\n"
+            "// 手寫的警語在 expensiveBacktest.ts；那裡會比對本檔的數字，\n"
+            "// 不一致時只拿掉數字、保留定義性警語（不給過時數字，也不拿掉安全提醒）。\n\n"
+            "export const EXPENSIVE_STATS = {\n"
+            f"  horizon: {MAIN_HORIZON},\n"
+            f"  n: {int(r['樣本數'])},\n"
+            f"  excess: {float(r['同月超額%'])},\n"
+            "} as const\n"
+        )
+    print(f"  已輸出 {path}（n={int(r['樣本數'])}、同月超額 {float(r['同月超額%'])}%）")
+
+
 def main():
     data = bt.load_all()
     dates = data["dates"]
@@ -183,6 +217,8 @@ def main():
     if not bands.empty:
         bands.to_csv(os.path.join(bt.OUT_DIR, "expensive_bands.csv"),
                      index=False, encoding="utf-8-sig")
+
+    export_stats(overall)
 
     pd.set_option("display.unicode.east_asian_width", True, "display.width", 250)
     print("\n=== 昂貴訊號整體結果（報酬單位 %）===")
