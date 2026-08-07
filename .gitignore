@@ -25,6 +25,10 @@ node_modules/
 package.json
 package-lock.json
 
+# 本機草稿（給人看的說明稿與未定案的規劃，不進版控）
+回測報告白話版_四模型完整版.html
+美股估值建置計畫.md
+
 # 系統檔
 .DS_Store
 Thumbs.db
