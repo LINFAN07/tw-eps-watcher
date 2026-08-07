@@ -55,13 +55,26 @@ NO_SCHEDULE_OK = {
     "backtest_margin_filter.py":      "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
     "backtest_badges.py":             "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
     "backtest_filter_compare.py":     "由 export_quality_stats.py 內部呼叫（SCRIPTS 清單）",
-    # 一次性研究／檢驗，不維護任何欄位
+    # ── 一次性研究／檢驗，不維護任何欄位 ──
+    #
+    # ⚠️ 這一組有共同的盲區，而且它正在變大（2026-08 已達 5 支）：
+    # 每一支的**結論都是手寫**進 schema.sql 的常數或前端的 .ts 常數，
+    # 只有原始 CSV 是腳本產生的。兩者之間沒有任何同步機制——重跑後數字變了，
+    # 手寫的那份不會跟著動，畫面上也看不出它已經過期。
+    # 本稽核只看「有沒有掛排程」，看不到這種過期，所以綠燈不代表數字是新的。
+    #
+    # 掛排程解決不了：排程能重跑數字，不能改手寫的常數。
+    # 真正的解法是仿 lib/qualityBacktest.isQualityInSync()——前端拿一個基準值
+    # 對照兩份 lib 是否同步，不同步就隱藏，寧可不顯示也不給過時數字。
+    # 這一組全部都還沒有那道保險。
     "backtest_quality.py":            "一次性產品決策回測（該不該做合理估值榜），不產出線上資料",
     # 盲區：它算的是 schema.sql 兩個生成欄位的門檻依據（pe_deep_discount 3 倍、
     # pb_reliable 2 倍），而那兩個常數是【手寫在 SQL 裡】的，沒有任何機制會在
     # 回測結論改變時提醒重看。掛排程也無用——排程能重跑數字，不能改 SQL 常數。
     # 改動 TTM／還原／樣本集合之後必須手動重跑並比對判讀條件（見腳本 docstring）。
     "backtest_discount_bands.py":     "門檻校準用；結論為手寫進 schema.sql 的常數，非自動生成欄位",
+    "backtest_expensive.py":          "「昂貴」訊號回測；只輸出 expensive_*.csv，結論手寫進 lib/expensiveBacktest.ts",
+    "audit_oos_premium_bands.py":     "一次性樣本外檢驗（溢價 2~3 倍該不該做成產品）；只輸出 CSV，不維護任何欄位",
     # 盲區：這支的結論寫進 lib/backtest.py 的 caveatFor() 是「手寫」的，
     # 資料再累積兩年後 P/S 的產業排名延續性可能翻掉，而沒有任何機制會提醒重跑。
     # 若哪天要把延續性判斷自動化，就必須把這支移出白名單、掛進 recalc_chain。
