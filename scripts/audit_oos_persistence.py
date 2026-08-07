@@ -24,19 +24,31 @@ import pandas as pd
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "backtest_results")
-HORIZON    = 12       # 與 by_industry 一致：持有 12 個月
-SPLIT_YEAR = 2022     # 前期 < 2022、後期 ≥ 2022
-MIN_SAMPLE = 30       # 兩個半期都要達到才納入（與 by_industry 門檻一致）
-THRESH     = 3        # 超額 ≥ +3pp 稱「領先」、≤ −3pp 稱「落後」（與 EXCESS_THRESHOLD 一致）
+HORIZON     = 12            # 與 by_industry 一致：持有 12 個月
+SPLIT_YEARS = (2021, 2022, 2023)   # 三個切點都要通過才算延續，見 PERSIST_MIN
+MIN_SAMPLE  = 30            # 兩個半期都要達到才納入（與 by_industry 門檻一致）
+THRESH      = 3             # 超額 ≥ +3pp 稱「領先」、≤ −3pp 稱「落後」（與 EXCESS_THRESHOLD 一致）
+MODELS      = ("P/E", "P/B", "P/S", "P/FCF")
+
+# 判定「產業排名會延續」的 Spearman 下限。首跑實測 P/E ~0、P/B ~+0.1、P/FCF ~0，
+# 唯獨 P/S +0.45~0.62——0.3 落在這個明顯的斷點上，不是為了讓 P/S 通過而挑的。
+# 三個切點都要達標：單一切點的相關性對切點位置很敏感（同 backtest_discount_bands
+# 的教訓：同一組資料換個切點結論就翻面）。
+PERSIST_MIN = 0.3
 
 
 def load() -> tuple[pd.DataFrame, pd.DataFrame]:
     def read(name):
         df = pd.read_csv(os.path.join(RESULTS_DIR, name), dtype={"stock_id": str})
-        df = df[df["horizon"] == HORIZON].copy()
-        df["half"] = df["date"].str[:4].astype(int).lt(SPLIT_YEAR).map({True: "早", False: "晚"})
-        return df
+        return df[df["horizon"] == HORIZON].copy()
     return read("signals.csv"), read("universe.csv")
+
+
+def with_half(df: pd.DataFrame, split_year: int) -> pd.DataFrame:
+    """依切點標記早／晚半期。切點是參數而非常數——三個切點要在同一次執行裡跑完"""
+    out = df.copy()
+    out["half"] = out["date"].str[:4].astype(int).lt(split_year).map({True: "早", False: "晚"})
+    return out
 
 
 def excess_table(signals: pd.DataFrame, universe: pd.DataFrame) -> pd.DataFrame:
@@ -62,13 +74,14 @@ def excess_table(signals: pd.DataFrame, universe: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def report(name: str, df: pd.DataFrame) -> None:
+def report(name: str, df: pd.DataFrame) -> float | None:
+    """印出該模型的持續性檢驗，回傳 Spearman 相關性（組合數過少時回 None）"""
     print(f"\n{'='*60}\n{name}（{len(df)} 個產業組合，兩半期各 ≥{MIN_SAMPLE} 筆）")
     if len(df) < 4:
         print("  組合數過少，無法可靠檢驗持續性")
         if len(df):
             print(df[["industry", "早超額", "晚超額"]].round(2).to_string(index=False))
-        return
+        return None
 
     pear = df["早超額"].corr(df["晚超額"], method="pearson")
     # Spearman ＝「排名後的 Pearson」，如此免裝 scipy
@@ -85,18 +98,64 @@ def report(name: str, df: pd.DataFrame) -> None:
     ahead = df[df["早超額"] >= THRESH]
     if len(ahead):
         print(f"  前期「領先」{len(ahead)} 組 → 後期超額中位數 {ahead['晚超額'].median():+.2f}pp")
+    return spear
+
+
+def export_persistence(spearman: dict[str, list[float | None]]) -> None:
+    """
+    把「哪些模型的產業排名會延續」輸出成 frontend/lib/oosPersistence.ts。
+
+    為什麼要有這一步：這個判斷原本只存在兩個地方——本腳本結尾的一段 print，
+    以及 `lib/backtest.caveatFor()` 裡手寫的 `model === 'ps'`。兩者之間沒有
+    任何機制；資料再累積兩年後 P/S 的延續性可能翻掉，而沒有東西會提醒重跑，
+    前端也照樣宣告「這個排名相對可信」。
+
+    做法同 expensiveStats.ts：機器產生的判定放這裡，手寫的措辭留在前端，
+    前端比對兩者。不一致時**退回保守的那一句**（OOS_CAVEAT，不延續），
+    而不是隱藏——說「別當預測」永遠是安全的，說「相對可信」才需要證據。
+    """
+    key = {"P/E": "pe", "P/B": "pb", "P/S": "ps", "P/FCF": "pfcf"}
+    lines = []
+    for model, values in spearman.items():
+        ok = [v for v in values if v is not None]
+        persists = len(ok) == len(SPLIT_YEARS) and all(v >= PERSIST_MIN for v in ok)
+        shown = ", ".join("null" if v is None else f"{v:.2f}" for v in values)
+        lines.append(f"  {key[model]}: {{ persists: {str(persists).lower()}, "
+                     f"spearman: [{shown}] }},")
+
+    path = os.path.join(os.path.dirname(__file__), "..", "frontend", "lib", "oosPersistence.ts")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(
+            "// 由 scripts/audit_oos_persistence.py 產生，請勿手動編輯。重跑會覆寫此檔。\n"
+            "// persists = 三個切點的 Spearman 都 ≥ "
+            f"{PERSIST_MIN}（切點 {'／'.join(map(str, SPLIT_YEARS))}）。\n"
+            "// 手寫的措辭在 backtest.ts；那裡會比對本檔，不一致時退回保守警語。\n\n"
+            "export const OOS_PERSISTENCE = {\n" + "\n".join(lines) + "\n} as const\n"
+        )
+    print(f"\n已輸出 {path}")
 
 
 def main():
     signals, universe = load()
-    for model in ["P/E", "P/B", "P/S", "P/FCF"]:
-        df = excess_table(signals[signals["model"] == model], universe)
-        report(model, df)
+    spearman: dict[str, list[float | None]] = {m: [] for m in MODELS}
 
-    print(f"\n{'='*60}\n2026-07-23 首跑結論（三切點 2021／2022／2023）：\n"
-          "  P/E ~0、P/B ~+0.1、P/FCF ~0 → 不延續，用 OOS_CAVEAT\n"
-          "  P/S +0.45~0.62 穩定為正 → 唯一延續，前端改用 OOS_CAVEAT_PS\n"
-          "延續的是產業間的『相對排名』，非絕對報酬——四個模型的便宜股整體仍輸 0050。")
+    for split in SPLIT_YEARS:
+        print(f"\n{'#'*60}\n# 切點 {split}（前期 < {split}、後期 ≥ {split}）\n{'#'*60}")
+        sig, uni = with_half(signals, split), with_half(universe, split)
+        for model in MODELS:
+            spearman[model].append(report(model, excess_table(sig[sig["model"] == model], uni)))
+
+    print(f"\n{'='*60}\n三切點彙總（Spearman，判定門檻 ≥{PERSIST_MIN} 且三段全過）：")
+    for model, values in spearman.items():
+        shown = " / ".join("—" if v is None else f"{v:+.2f}" for v in values)
+        ok = [v for v in values if v is not None]
+        verdict = ("延續 → OOS_CAVEAT_PS"
+                   if len(ok) == len(SPLIT_YEARS) and all(v >= PERSIST_MIN for v in ok)
+                   else "不延續 → OOS_CAVEAT")
+        print(f"  {model:6s} {shown:24s} {verdict}")
+    print("延續的是產業間的『相對排名』，非絕對報酬——四個模型的便宜股整體仍輸 0050。")
+
+    export_persistence(spearman)
 
 
 if __name__ == "__main__":

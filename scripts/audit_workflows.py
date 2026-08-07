@@ -73,13 +73,13 @@ NO_SCHEDULE_OK = {
     # 回測結論改變時提醒重看。掛排程也無用——排程能重跑數字，不能改 SQL 常數。
     # 改動 TTM／還原／樣本集合之後必須手動重跑並比對判讀條件（見腳本 docstring）。
     "backtest_discount_bands.py":     "門檻校準用；結論為手寫進 schema.sql 的常數，非自動生成欄位",
-    "backtest_expensive.py":          "「昂貴」訊號回測；只輸出 expensive_*.csv，結論手寫進 lib/expensiveBacktest.ts",
     "audit_oos_premium_bands.py":     "一次性樣本外檢驗（溢價 2~3 倍該不該做成產品）；只輸出 CSV，不維護任何欄位",
-    # 盲區：這支的結論寫進 lib/backtest.py 的 caveatFor() 是「手寫」的，
-    # 資料再累積兩年後 P/S 的產業排名延續性可能翻掉，而沒有任何機制會提醒重跑。
-    # 若哪天要把延續性判斷自動化，就必須把這支移出白名單、掛進 recalc_chain。
-    "audit_oos_persistence.py":       "一次性樣本外持續性檢驗；結論為手寫的警語判斷，非自動生成欄位",
 }
+# backtest_expensive.py 與 audit_oos_persistence.py 已於 2026-08-07 移出本清單，
+# 改掛 recalc_chain.yml：它們現在各自產生一份 .ts 供前端比對手寫結論，
+# 而生成檔若不跟著資料重跑就會停在舊值、讓比對照樣通過（假的綠燈）。
+# 「若哪天要把延續性判斷自動化，就必須把這支移出白名單、掛進 recalc_chain」
+# ——那是上一版留在此處的註記，這次就是那一天。
 # 注意：已經掛在 workflow 上的腳本【不要】列進上面的白名單。
 # 白名單只列「本來就不該有排程」的；若把已排程的也列進去，
 # 未來它被移出排程時稽核會保持沉默，等於在保險絲上並聯一條銅線。

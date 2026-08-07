@@ -95,6 +95,23 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/export_quality_stats.py
 
+      # 下面兩支的結論是【手寫】進前端的（昂貴警語的數字、P/S 延續性的措辭），
+      # 前端會拿它們產生的 .ts 比對手寫值，不一致就退回保守版本。
+      # 那道保險只擋得住「腳本重跑了、手寫沒更新」——擋不住「資料變了、腳本從沒
+      # 重跑」，因為生成檔會停在舊值、比對照樣通過。故必須掛進本鏈一起重跑。
+      - name: 昂貴訊號回測（產生 expensiveStats.ts）
+        if: ${{ !inputs.skip_backtest }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/backtest_expensive.py
+
+      # 讀 signals.csv / universe.csv（backtest_valuation.py 的產出，已在 .gitignore），
+      # 故必須排在它之後、且在同一個 job 裡才讀得到。
+      - name: 產業排名的樣本外持續性（產生 oosPersistence.ts）
+        if: ${{ !inputs.skip_backtest }}
+        run: python scripts/audit_oos_persistence.py
+
       # 回測結果要進版控前端才看得到（backtestStats.ts 由回測腳本產生）。
       # signals.csv 與 universe.csv 已在 .gitignore，不會被帶進來。
       - name: 提交回測結果
@@ -102,7 +119,8 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add backtest_results/ frontend/lib/backtestStats.ts frontend/lib/backtestQualityStats.ts
+          git add backtest_results/ frontend/lib/backtestStats.ts frontend/lib/backtestQualityStats.ts \
+                  frontend/lib/expensiveStats.ts frontend/lib/oosPersistence.ts
           if git diff --staged --quiet; then
             echo "回測結果無變動，不需提交"
           else

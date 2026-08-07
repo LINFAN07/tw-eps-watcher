@@ -11,6 +11,7 @@
  */
 
 import { BY_INDUSTRY, OVERALL, INDUSTRY_HORIZON, type IndustryRow } from './backtestStats'
+import { OOS_PERSISTENCE } from './oosPersistence'   // 見 caveatFor：手寫假設要與它一致才生效
 
 /**
  * 四個模型（P/E、P/B、P/S、P/FCF）都已回測，個股卡片與排行榜都注入其產業實績。
@@ -65,9 +66,22 @@ export const OOS_CAVEAT_PS = '這個排名相對可信——我們把資料切�
   + 'P/S 是四個模型裡唯一「產業排名會延續」的：某產業以前有效或落後，之後多半維持。'
   + '但這說的是產業間的相對高下，不是「買了就會賺」，P/S 便宜股整體報酬仍輸大盤。'
 
-/** 依模型挑對應的延續性警語 */
+/**
+ * 依模型挑對應的延續性警語。
+ *
+ * `model === 'ps'` 是**手寫的假設**（措辭是判斷，OOS_CAVEAT_PS 的文字寫死了
+ * 「P/S 是四個模型裡唯一…」，不該自動生成）；OOS_PERSISTENCE 則是
+ * `audit_oos_persistence.py` 每次重跑產生的判定。兩者都成立才給出樂觀的那一句。
+ *
+ * 不一致時**退回 OOS_CAVEAT**，不是隱藏——說「這是紀錄不是預測」永遠安全，
+ * 說「這個排名相對可信」才需要證據。兩種失同步方向都導向保守：
+ *   腳本說不延續了（資料再累積後 P/S 翻掉）→ 不再宣告可信
+ *   腳本說別的模型也延續了 → 也不宣告，因為 PS 版的措辭套不上別的模型，
+ *                            要升級得由人重寫文字
+ */
 function caveatFor(model: BacktestedModel): string {
-  return model === 'ps' ? OOS_CAVEAT_PS : OOS_CAVEAT
+  const assumedToPersist = model === 'ps'
+  return assumedToPersist && OOS_PERSISTENCE[model].persists ? OOS_CAVEAT_PS : OOS_CAVEAT
 }
 
 /**
