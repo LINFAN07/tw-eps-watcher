@@ -247,6 +247,17 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 | `/api/revenue/[code]` | 月營收與年增率（近 3 年 `points[]` ＋ `summary`）**格式與 chart API 不同** |
 | `/api/signals/[code]` | P/E 便宜訊號回放（`episodes[]` ＋ `summary`）。**以當時可得資料重算**，與河流圖的常數倍數不同 |
 
+### 頁面
+
+| 路徑 | 用途 |
+|------|------|
+| `/` | 搜尋 ＋ 便宜股排行榜 ＋ 市場溫度計 |
+| `/stock/[code]` | 個股詳情（區塊順序見下） |
+| `/screener` | 條件篩選（產業／估值狀態／ROE／利益率／負債比／殖利率／市值）。全市場一次送到瀏覽器，改條件不必來回請求；衍生值與可靠性旗標一律在伺服器端算好 |
+| `/backtest` | 模型體檢報告 |
+| `/report` | 每日市場快報 |
+| `/health` | 資料健康狀態 |
+
 所有 chart API 回傳格式相同（`/api/revenue` 不在此列）：
 ```typescript
 { chartData: { date, price, cheap, fair, expensive }[], valuation: {...} }

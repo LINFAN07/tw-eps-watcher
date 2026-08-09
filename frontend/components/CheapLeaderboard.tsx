@@ -31,7 +31,7 @@ const RATIO_COLS: Record<string, [string, string, string] | null> = {
  * 這個是兩個獨立證據確認的事實，要真的排除。
  * 個股頁仍照常顯示，那是查詢不是推薦。
  */
-async function fetchUnadjusted(db: ReturnType<typeof getSupabase>): Promise<Set<string>> {
+export async function fetchUnadjusted(db: ReturnType<typeof getSupabase>): Promise<Set<string>> {
   const out = new Set<string>()
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await db.from('unadjusted_capital_events')
