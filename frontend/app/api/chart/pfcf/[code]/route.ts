@@ -3,7 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 import { adjustedMap } from '@/lib/priceAdjust'
 import { fetchExAdjustment } from '@/lib/exRights'
-import { reportWindow } from '@/lib/periodicity'
+import { ttmWindows } from '@/lib/periodicity'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
   const all: { date: string; close_price: number }[] = []
@@ -95,16 +95,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   if (quarterly.length < 4)
     return NextResponse.json({ error: '現金流資料不足（需至少 4 季）' }, { status: 404 })
 
-  // 每季計算 TTM FCF per share（滾動 4 個「單季」合計）
+  // 每季計算 TTM FCF per share。取「哪幾期剛好 12 個月」而非「最近 N 列」——
+  // 公司中途改變揭露頻率時，最近 4 列可能橫跨 21 個月（見 lib/periodicity.ts）。
   // FCF = operating_cf + capex（capex 通常為負），單位：元
   // FCF per share = 元 ÷ (千股 × 1000) = 元/股
-  // 期數與後端共用判定，不可寫死 4（見 lib/periodicity.ts）
-  const w = reportWindow(quarterly.map(q => q.date))
+  const fcfByDate = new Map(quarterly.map(q => [q.date, q.fcf]))
   const ttmFcf: { date: string; fcfPerShare: number }[] = []
-  for (let i = w - 1; i < quarterly.length; i++) {
-    const fcf = quarterly.slice(i - w + 1, i + 1).reduce((s, q) => s + q.fcf, 0)
+  for (const [date, window] of ttmWindows(quarterly.map(q => q.date))) {
+    if (!window) continue        // 湊不出 12 個月就不給這一點，不用近似值頂替
+    const fcf = window.reduce((sum, d) => sum + (fcfByDate.get(d) ?? 0), 0)
     const fcfPs = fcf / (listedShares * 1000)
-    if (fcfPs > 0) ttmFcf.push({ date: quarterly[i].date, fcfPerShare: fcfPs })
+    if (fcfPs > 0) ttmFcf.push({ date, fcfPerShare: fcfPs })
   }
 
   if (ttmFcf.length === 0)

@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 import { adjustedMap } from '@/lib/priceAdjust'
 import { fetchExAdjustment } from '@/lib/exRights'
+import { ttmMonthWindow } from '@/lib/periodicity'
 
 async function fetchAllPrices(db: SupabaseClient, stockId: string) {
   const all: { date: string; close_price: number }[] = []
@@ -68,16 +69,20 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   const byMonth: Record<string, typeof prices[0]> = {}
   for (const p of prices) byMonth[p.date.slice(0, 7)] = p
 
-  // 從第 12 筆起，每月計算 TTM 營收（前 12 個月合計）→ 計算帶狀價格
+  // 每月計算 TTM 營收 → 帶狀價格。取「連續 12 個月」而非「最近 12 列」——
+  // 全市場 42 支有缺月（共 388 個月），取 12 列會橫跨 13 個月以上、營收灌水。
   // revenue 元 ÷ (listed_shares 千股 × 1000) = 元/股
-  const chartData = revenueRaw.slice(11).map((_, i) => {
-    const idx    = i + 11
-    const window = revenueRaw.slice(idx - 11, idx + 1)
-    const ttmRev = window.reduce((s, r) => s + Number(r.revenue), 0)
+  const revByMonth = new Map(
+    revenueRaw.map(r => [String(r.year_month).slice(0, 7), Number(r.revenue)]))
+  const availableMonths = [...revByMonth.keys()]
+
+  const chartData = availableMonths.map(monthStr => {
+    const window = ttmMonthWindow(availableMonths, monthStr)
+    if (!window) return null      // 缺月就不給這一點，不用 11 個月頂替 12 個月
+    const ttmRev = window.reduce((s, m) => s + (revByMonth.get(m) ?? 0), 0)
     const rps    = ttmRev / (listedShares * 1000)  // 元/股
     if (rps <= 0) return null
 
-    const monthStr   = revenueRaw[idx].year_month.slice(0, 7)
     const pricePoint = byMonth[monthStr]
     if (!pricePoint) return null
 

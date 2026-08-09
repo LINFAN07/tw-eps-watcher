@@ -13,7 +13,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { backAdjust, type ExEvent } from '../frontend/lib/priceAdjust'
-import { reportWindow } from '../frontend/lib/periodicity'
+import { reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
 
 interface AdjustCase {
   name: string
@@ -32,10 +32,38 @@ interface WindowCase {
   expect: number
 }
 
+interface TtmPeriodsCase {
+  name: string
+  source: string
+  period_ends: string[]
+  expect: string[] | null
+}
+
+interface TtmMonthCase {
+  name: string
+  source: string
+  available: string[]
+  end_month: string
+  expect: string[] | null
+}
+
+/** 陣列或 null 的相等比較（fixture 的預期值可能是 null） */
+function sameList(a: string[] | null, b: string[] | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+const show = (v: string[] | null) => (v === null ? 'null' : `[${v.join(', ')}]`)
+
 const TOLERANCE = 0.01
 const fixture = JSON.parse(
   readFileSync(join(__dirname, 'fixtures', 'shared_cases.json'), 'utf-8'),
-) as { back_adjust: AdjustCase[]; report_window: WindowCase[] }
+) as {
+  back_adjust: AdjustCase[]
+  report_window: WindowCase[]
+  ttm_periods: TtmPeriodsCase[]
+  ttm_month_window: TtmMonthCase[]
+}
 
 const failures: string[] = []
 
@@ -61,7 +89,33 @@ for (const c of fixture.report_window) {
   }
 }
 
+// ttmPeriods 是 reportWindow 的下一層：後者只答「一年幾期」，答不了
+// 「哪幾期剛好 12 個月」。2026-08-06 修了 Python 端、漏了這一端，
+// 43 支股票的河流圖因此用錯 TTM——這一段就是為此存在。
+console.log('\n=== ttmPeriods ===')
+for (const c of fixture.ttm_periods) {
+  const got = ttmPeriods(c.period_ends)
+  const ok = sameList(got, c.expect)
+  console.log(`  ${ok ? '✓' : '✗'} ${c.name}`)
+  if (!ok) {
+    console.log(`      得到 ${show(got)}，預期 ${show(c.expect)}（${c.source}）`)
+    failures.push(c.name)
+  }
+}
+
+console.log('\n=== ttmMonthWindow ===')
+for (const c of fixture.ttm_month_window) {
+  const got = ttmMonthWindow(c.available, c.end_month)
+  const ok = sameList(got, c.expect)
+  console.log(`  ${ok ? '✓' : '✗'} ${c.name}`)
+  if (!ok) {
+    console.log(`      得到 ${show(got)}，預期 ${show(c.expect)}（${c.source}）`)
+    failures.push(c.name)
+  }
+}
+
 const total = fixture.back_adjust.length + fixture.report_window.length
+  + fixture.ttm_periods.length + fixture.ttm_month_window.length
 console.log(`\n${total - failures.length}/${total} 通過`)
 if (failures.length) {
   console.log('失敗：' + failures.join('、'))

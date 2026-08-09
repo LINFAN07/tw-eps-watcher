@@ -3,7 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
 import { adjustedMap } from '@/lib/priceAdjust'
 import { fetchExAdjustment } from '@/lib/exRights'
-import { reportWindow } from '@/lib/periodicity'
+import { ttmWindows } from '@/lib/periodicity'
 
 // 取得一支股票的所有日收盤價（自動分頁，繞過 Supabase 1000 筆上限）
 // 中途任一頁失敗即拋出錯誤，避免靜默回傳截斷的不完整資料
@@ -42,16 +42,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     .order('quarter_end_date')
   if (!epsRaw || epsRaw.length < 2) return NextResponse.json({ error: 'Insufficient EPS' }, { status: 404 })
 
-  // 計算 TTM EPS 序列。期數不可寫死 4——半年報公司（興櫃）只揭露 6/12 月，
-  // 加 4 期等於把兩年的獲利當成一年，河流圖的帶會整體上移約一倍、
-  // 與估值卡的數字兜不起來。判定與後端共用同一套規則（lib/periodicity.ts）。
-  const w = reportWindow(epsRaw.map(e => e.quarter_end_date))
-  const ttmSeries = epsRaw.slice(w - 1).map((_, i) => {
-    const base = i + w - 1
-    const ttm = Array.from({ length: w }, (_, j) => j)
-      .reduce((s, j) => s + Number(epsRaw[base - j].eps), 0)
-    return { date: epsRaw[base].quarter_end_date, ttm }
-  }).filter(e => e.ttm > 0)
+  // 計算 TTM EPS 序列。問的是「哪幾期加起來剛好 12 個月」，不是「最近 N 列」——
+  // 期數標籤答不了公司中途改變揭露頻率的情形：半年報轉季報時，最近 4 列會是
+  // Q1+H2+H1+H2＝21 個月。2026-08-09 修正前這裡用的是後者，43 支在市股票的
+  // 估值帶因此偏高（7843 用 3.16，正確 -0.14），且與同一頁的估值卡矛盾。
+  // 與後端共用同一套規則（lib/periodicity.ts，兩端由 tests/test_shared.* 綁在一起）。
+  const epsByDate = new Map(epsRaw.map(e => [e.quarter_end_date, Number(e.eps)]))
+  const ttmSeries = [...ttmWindows(epsRaw.map(e => e.quarter_end_date))]
+    .flatMap(([date, window]) => window
+      // 湊不出 12 個月的期別直接不給點，不用近似值頂替（資料誠信原則第 3 條）
+      ? [{ date, ttm: window.reduce((sum, d) => sum + (epsByDate.get(d) ?? 0), 0) }]
+      : [])
+    .filter(e => e.ttm > 0)
 
   // 日收盤價，取每月最後一筆（約 120 點）；失敗則回 500
   let prices: Awaited<ReturnType<typeof fetchAllPrices>>

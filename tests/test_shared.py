@@ -26,7 +26,7 @@ sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from price_adjust import back_adjust          # noqa: E402
-from periodicity import report_window         # noqa: E402
+from periodicity import report_window, ttm_month_window, ttm_periods   # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "shared_cases.json")
 TOLERANCE = 0.01
@@ -57,7 +57,29 @@ def main() -> int:
             print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
             failures.append(c["name"])
 
-    total = len(cases["back_adjust"]) + len(cases["report_window"])
+    # ttm_periods 是 report_window 的下一層：後者只答「一年幾期」，
+    # 答不了「哪幾期剛好 12 個月」。2026-08-06 修了 Python、漏了 TypeScript，
+    # 43 支股票的河流圖因此用錯 TTM 三天無人察覺——這一段就是為此存在。
+    print("\n=== ttm_periods ===")
+    for c in cases["ttm_periods"]:
+        got = ttm_periods(c["period_ends"])
+        ok = got == c["expect"]
+        print(f"  {'✓' if ok else '✗'} {c['name']}")
+        if not ok:
+            print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
+            failures.append(c["name"])
+
+    print("\n=== ttm_month_window ===")
+    for c in cases["ttm_month_window"]:
+        got = ttm_month_window(c["available"], c["end_month"])
+        ok = got == c["expect"]
+        print(f"  {'✓' if ok else '✗'} {c['name']}")
+        if not ok:
+            print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
+            failures.append(c["name"])
+
+    total = sum(len(cases[k]) for k in
+                ("back_adjust", "report_window", "ttm_periods", "ttm_month_window"))
     print(f"\n{total - len(failures)}/{total} 通過")
     if failures:
         print("失敗：" + "、".join(failures))
