@@ -20,8 +20,10 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      # pandas / numpy 是 refetch_restated_eps.py 帶進來的——它會 import
+      # calculate_valuation 重算有更正的股票
       - name: 安裝套件
-        run: pip install requests supabase python-dotenv pyyaml
+        run: pip install requests supabase python-dotenv pyyaml pandas numpy
 
       # 排程稽核：比對「scripts/ 下所有腳本」與「workflow 實際執行的腳本」，
       # 抓出寫好卻沒掛排程的工作。此類缺陷不報錯、無症狀，只會讓某個資料欄位
@@ -33,6 +35,11 @@ jobs:
       # 純函式、不連資料庫，數秒完成，故放在最前面先擋。
       - name: 平行實作一致性測試（Python 端）
         run: python tests/test_shared.py
+
+      # 更正申報的分類邏輯（更正／來源分歧／新季度三者處置不同，判錯不會報錯）。
+      # 純函式、不連資料庫，故與上一支放在一起先擋。
+      - name: 更正申報分類邏輯測試
+        run: python tests/test_restated_eps.py
 
       - name: 設定 Node
         uses: actions/setup-node@v4
@@ -53,6 +60,21 @@ jobs:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
         run: python scripts/audit_cross_check.py
+
+      # 更正申報回補：eps_quarterly 是唯一「寫入後就不再重抓」的財報表
+      # （quarterly_eps_update.py 會跳過已有本季資料的股票以省下 4.2 小時），
+      # 公司事後更正財報，數字就永久停在第一版。2026-07-27：1591 的 2026Q1
+      # 停在 -0.08，官方已更正為 -1.18。
+      #
+      # ⚠️ 必須排在 audit_external.py【之前】：那支發現不符會 exit 1，
+      # 而步驟失敗會中止整個 job——排在後面等於永遠不會執行。
+      # 順序也讓稽核看到的是修完之後的狀態，剩下的才是真的需要人看的。
+      - name: 更正申報回補（重抓與交易所對不上的 EPS）
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python scripts/refetch_restated_eps.py
 
       # 對外比對：拿交易所官方申報值驗 EPS、每股淨值、除權息還原。
       # 上面兩支都只看「我們自己的數字彼此合不合」，來源本身錯了照樣通過；

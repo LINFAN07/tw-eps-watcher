@@ -372,11 +372,15 @@ def coverage_problem(official: dict, pending: set, due_checked: int, what: str) 
 
 
 def compare(official: dict, table: str, col: str, tol: float, relative: bool = False,
-            fetch=None, rel_floor: float = 0.0) -> tuple[list[str], list[str]]:
-    """逐筆比對官方值與資料庫值。回傳（逐筆不符清單, 涵蓋率問題）。
+            fetch=None, rel_floor: float = 0.0) -> tuple[list[str], list[str], list[dict]]:
+    """逐筆比對官方值與資料庫值。回傳（逐筆不符清單, 涵蓋率問題, 結構化不符明細）。
 
-    兩者分開回傳，是因為 check_bvps 會用「不符佔比」豁免逐筆差異，
+    前兩者分開回傳，是因為 check_bvps 會用「不符佔比」豁免逐筆差異，
     但涵蓋率（整批漏寫）不在可豁免之列——混在一起就會被那個門檻吞掉。
+
+    第三個是同一批不符的機器可讀版本，供 `refetch_restated_eps.py` 當重抓名單。
+    刻意由此處一併產出而不另寫一份比對：容差、同基準換算、申報中季別的處理
+    都在這裡，複製出去第二份遲早會與這裡分歧（同 periodicity.py 的教訓）。
 
     fetch 決定我們這邊怎麼取值：流量型指標（EPS）要用 db_values_ytd 換成
     年度累計才與官方同基準；存量型（每股淨值）用預設的 db_values 逐筆取即可。
@@ -388,7 +392,7 @@ def compare(official: dict, table: str, col: str, tol: float, relative: bool = F
     today = date.today()
     pending = {q for q in quarters if not is_settled(q, today)}
 
-    bad, checked, missing, near, due_checked = [], 0, 0, 0, 0
+    bad, recs, checked, missing, near, due_checked = [], [], 0, 0, 0, 0
     for key, theirs in official.items():
         mine = ours.get(key)
         if mine is None:
@@ -404,6 +408,8 @@ def compare(official: dict, table: str, col: str, tol: float, relative: bool = F
         if diff > limit:
             bad.append(f"{key[0]} {key[1]}：我們 {mine} vs 交易所 {theirs}"
                        f"（差 {mine - theirs:+.2f}）")
+            recs.append({"stock_id": key[0], "quarter_end_date": key[1],
+                         "ours": mine, "theirs": theirs})
         elif relative and diff > abs(theirs) * 0.01:
             near += 1
 
@@ -421,15 +427,21 @@ def compare(official: dict, table: str, col: str, tol: float, relative: bool = F
         # 涵蓋率門檻已放過申報中的季別，這裡必須明說「這段沒驗到東西」，
         # 否則收尾會印出「✅ 全部與交易所一致」——那就是本專案最怕的漂亮綠燈
         print(f"  （{table} 此段未實際驗證任何資料）")
-    return bad, coverage
+    return bad, coverage, recs
 
 
-def check_eps() -> list[str]:
+def eps_compare() -> tuple[list[str], list[str], list[dict]]:
+    """A 段的比對本體。獨立出來讓 `refetch_restated_eps.py` 能取得結構化不符明細，
+    而不必自己再兜一次端點與容差。"""
     print("\n=== A. 每股盈餘（綜合損益表 vs eps_quarterly）===")
     official = official_values(INCOME_ENDPOINTS, ("基本每股盈餘（元）",))
     # 官方是年初至今累計，我們存單季，故取值端換成同基準（見 db_values_ytd）
-    bad, coverage = compare(official, "eps_quarterly", "eps", EPS_TOLERANCE,
-                            fetch=db_values_ytd, rel_floor=EPS_TOLERANCE_REL)
+    return compare(official, "eps_quarterly", "eps", EPS_TOLERANCE,
+                   fetch=db_values_ytd, rel_floor=EPS_TOLERANCE_REL)
+
+
+def check_eps() -> list[str]:
+    bad, coverage, _ = eps_compare()
     return bad + coverage
 
 
@@ -449,8 +461,8 @@ def check_bvps() -> list[str]:
     print("\n=== B. 每股淨值（資產負債表 vs balance_sheet_quarterly）===")
     print("  注意：僅涵蓋上市；上櫃／興櫃的 TPEx 淨值欄名未驗證，故不納入")
     official = official_values(BALANCE_ENDPOINTS, ("每股參考淨值",))
-    bad, coverage = compare(official, "balance_sheet_quarterly",
-                            "book_value_per_share", BVPS_REL_TOLERANCE, relative=True)
+    bad, coverage, _ = compare(official, "balance_sheet_quarterly",
+                               "book_value_per_share", BVPS_REL_TOLERANCE, relative=True)
 
     rate = len(bad) / len(official) if official else 0
     print(f"  不符佔比 {rate:.1%}（門檻 {BVPS_BAD_RATE_LIMIT:.0%}，"

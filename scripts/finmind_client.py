@@ -75,6 +75,20 @@ def fetch(dataset: str, stock_id: str | None, start_date: str | None,
     raise FinMindError(f"{dataset}/{stock_id} 連續 {retries} 次失敗：{last_error}")
 
 
+# TaiwanStockFinancialStatements 用哪些 type 字串表示每股盈餘。
+# 放在這裡而不是各腳本各留一份：quarterly_eps_update.py 與
+# refetch_restated_eps.py 都寫入 eps_quarterly，兩份清單一旦漂移，
+# 同一張表就會依「是哪支腳本寫的」而有不同的取值規則。
+EPS_TYPES = frozenset({"EPS", "BasicEPS", "EPSTaxExcluded"})
+
+
+def eps_rows(stock_id: str, raw: list) -> list[dict]:
+    """FinMind 損益表資料列 → eps_quarterly 可直接寫入的列。"""
+    return [{"stock_id": stock_id, "quarter_end_date": r["date"], "eps": float(r["value"])}
+            for r in raw
+            if r.get("type") in EPS_TYPES and r.get("value") is not None]
+
+
 class FailureTracker:
     """
     記錄整批作業中的個別失敗。

@@ -40,7 +40,6 @@ SUPABASE_URL  = os.getenv("SUPABASE_URL")
 SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
 FINMIND_API   = "https://api.finmindtrade.com/api/v4/data"
-EPS_TYPES     = {"EPS", "BasicEPS", "EPSTaxExcluded"}
 CALL_INTERVAL = 6.5
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -156,11 +155,7 @@ def run():
             time.sleep(CALL_INTERVAL)
             continue
 
-        new_eps = [
-            {"stock_id": sid, "quarter_end_date": r["date"], "eps": float(r["value"])}
-            for r in raw
-            if r.get("type") in EPS_TYPES and r.get("value") is not None
-        ]
+        new_eps = fm.eps_rows(sid, raw)
 
         if not new_eps:
             time.sleep(CALL_INTERVAL)
