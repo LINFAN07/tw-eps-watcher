@@ -29,7 +29,11 @@ WF_DIR = ROOT / ".github" / "workflows"
 NO_SCHEDULE_OK = {
     # 一次性初始化（新環境才跑）
     "init_download.py":               "新環境初始化，跑一次",
-    "backfill_industry.py":           "一次性補產業別",
+    # 2026-08-09：這個豁免理由曾經是假的——產業別會變動（公司重分類、新掛牌、
+    # 交易所 2007 年把「電子工業」拆成 24~31），當成一次性的結果是 670 支（27.7%）
+    # 與現值不符，台積電被歸在「電子工業」而非「半導體業」。日常維護已改由
+    # refresh_industry.py 負責（掛 discover_stocks.yml）。本支只留作歷史初始化。
+    "backfill_industry.py":           "初始化用（FinMind 來源）；日常維護由 refresh_industry.py 負責（已掛 discover_stocks.yml）",
     "backfill_eps_from_income.py":    "由 quarterly_eps.yml 條件式呼叫",
     "backfill_last_seen.py":          "一次性回填 last_seen_date；日常維護由 daily_price_update.mark_delisted 負責",
     "patch_par_value.py":             "一次性修正面額寫死造成的每股淨值與股數錯誤；日常由 download_balance_sheet.py 用正確面額寫入",

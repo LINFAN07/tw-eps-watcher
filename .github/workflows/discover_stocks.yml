@@ -30,6 +30,19 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python scripts/discover_new_stocks.py
 
+      # 產業別以交易所公告的產業代碼維護。排在新股之後：剛補進來的股票這一輪
+      # 就能拿到正確分類，不必等下個月。
+      #
+      # 這件事原本由一次性的 backfill_industry.py 負責，跑完就沒再更新——
+      # 2026-08-09 實測 670 支（27.7%）與現值不符，其中 262 支還掛在 2007 年
+      # 就被拆掉的母類別「電子工業」（台積電、聯發科、中華電、大立光全中）。
+      # 產業別會變動，不是一次性資料。
+      - name: 更新產業別（交易所產業代碼）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/refresh_industry.py
+
       - name: 排程失敗 Email 通知
         if: failure()
         uses: dawidd6/action-send-mail@v3

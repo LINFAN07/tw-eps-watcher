@@ -3,8 +3,8 @@
 // 手寫的措辭在 backtest.ts；那裡會比對本檔，不一致時退回保守警語。
 
 export const OOS_PERSISTENCE = {
-  pe: { persists: false, spearman: [0.08, 0.22, -0.04] },
-  pb: { persists: false, spearman: [0.18, 0.24, 0.35] },
-  ps: { persists: true, spearman: [0.41, 0.55, 0.55] },
-  pfcf: { persists: false, spearman: [0.46, 0.24, -0.21] },
+  pe: { persists: false, spearman: [0.07, 0.08, -0.06] },
+  pb: { persists: false, spearman: [0.21, 0.15, 0.27] },
+  ps: { persists: true, spearman: [0.47, 0.47, 0.51] },
+  pfcf: { persists: false, spearman: [0.25, 0.22, -0.03] },
 } as const

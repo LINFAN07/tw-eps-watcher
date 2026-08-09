@@ -23,8 +23,12 @@ backtest_valuation.py — 估值帶訊號回測
 
 ## 已知偏誤（結果必然偏樂觀，不可略過）
 
-- **倖存者偏差**：`stocks` 表已移除下市／停牌股（約 198 檔），
-  回測母體只含活到今天的公司。用現有資料無法修復。
+- **倖存者偏差**：回測母體只含活到今天的公司，用現有資料無法修復。
+  兩個來源：① 2026 年初一次性清掉的下市／停牌股（約 198 檔）根本不在 `stocks` 表；
+  ② 之後改為以 `delisted_at` 標記保留，`load_all()` 會排除它們。
+  **②2026-08-09 才補上**——在那之前那 120 檔留在母體裡，價格凍結後報酬算成 0，
+  把全市場等權的中位數往下拉，使各模型的超額看起來比實際好（實測 0.20pp）。
+  排除它們不是修好倖存者偏差，只是不再額外製造第二個偏差。
 - **月採樣近似**：只取每月最後交易日，還原因子的「除息前收盤價」以
   前一個月末價近似（誤差約 factor 的 0.3%，對常數縮放的影響可忽略）。
 - **無交易成本**：未計手續費、證交稅與流動性衝擊。
@@ -133,7 +137,18 @@ def fetch_month_end_prices(dates: list[str], stock_ids: list[str]) -> pd.DataFra
 def load_all() -> dict:
     print("讀取資料…")
     dates = month_end_dates()
-    stocks = _cached("stocks", lambda: _paged("stocks", "stock_id,name,industry,market,listed_shares", "stock_id"))
+    stocks = _cached("stocks", lambda: _paged(
+        "stocks", "stock_id,name,industry,market,listed_shares,delisted_at", "stock_id"))
+    # 排除已下市股。它們的價格凍結在最後一個交易日，往後每一期的報酬都算成 0，
+    # 混進母體會把「全市場等權」的中位數往下拉，使各模型的超額看起來比實際好。
+    #
+    # ⚠️ 這【不能】修掉倖存者偏差，只是不再額外製造第二個偏差：
+    # 2026 年初一次性清掉的那批下市股（約 198 檔）本來就不在 stocks 表，
+    # 母體仍然只含活到今天的公司，結果依舊偏樂觀。
+    # 2026-08-09 實測影響：營收成長訊號的同月超額由 −0.18% 變 −0.38%（0.20pp）。
+    before = len(stocks)
+    stocks = stocks[stocks["delisted_at"].isna()].drop(columns=["delisted_at"])
+    print(f"  排除已下市 {before - len(stocks)} 支，母體 {len(stocks)} 支")
     return {
         "dates":     dates,
         "prices":    fetch_month_end_prices(dates, stocks["stock_id"].tolist()),

@@ -53,7 +53,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
       // 湊不出 12 個月的期別直接不給點，不用近似值頂替（資料誠信原則第 3 條）
       ? [{ date, ttm: window.reduce((sum, d) => sum + (epsByDate.get(d) ?? 0), 0) }]
       : [])
-    .filter(e => e.ttm > 0)
+  // ⚠️ 這裡刻意【不】過濾 ttm > 0。過濾掉虧損期會讓下面的 merge_asof 一路沿用
+  // 最後一個為正的 TTM，於是卡片寫「虧損 −0.10」、圖上卻還有一條用 0.18 畫的帶
+  // （4573 實例）。虧損期要讓帶斷掉，不是拿舊獲利撐著。
 
   // 日收盤價，取每月最後一筆（約 120 點）；失敗則回 500
   let prices: Awaited<ReturnType<typeof fetchAllPrices>>
@@ -75,20 +77,30 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   const chartData = sampled.map(p => {
     while (ei + 1 < ttmSeries.length && ttmSeries[ei + 1].date <= p.date) ei++
     const ttm = ttmSeries[ei]?.date <= p.date ? ttmSeries[ei].ttm : null
-    if (!ttm) return null
+    if (ttm === null) return null            // 首份財報之前，連價格都不畫
+    // TTM ≤ 0：股價線照畫，三條帶給 null 讓它斷在最後一個有效點。
+    // 虧損期本來就沒有「合理本益比」可言，硬畫一條是在假裝模型還適用。
+    const band = ttm > 0
+      ? {
+          cheap:     +(ttm * Number(val.cheap_pe)).toFixed(2),
+          fair:      +(ttm * Number(val.fair_pe)).toFixed(2),
+          expensive: +(ttm * Number(val.expensive_pe)).toFixed(2),
+        }
+      : { cheap: null, fair: null, expensive: null }
     return {
       date: p.date,
       // 河流圖價格線用還原價（與還原後的估值帶一致）。最新一日還原價==原始價，
       // 故現價顯示不受影響；查無還原值時回退原始價。
       price: adjMap[p.date] ?? Number(p.close_price),
-      cheap: +(ttm * Number(val.cheap_pe)).toFixed(2),
-      fair: +(ttm * Number(val.fair_pe)).toFixed(2),
-      expensive: +(ttm * Number(val.expensive_pe)).toFixed(2),
+      ...band,
     }
-  }).filter(Boolean)
+  }).filter(Boolean) as { date: string; price: number
+                          cheap: number | null; fair: number | null; expensive: number | null }[]
 
-  // TTM 全為負時 chartData 為空（虧損股無法計算合理 P/E 帶）
-  if (chartData.length === 0) return NextResponse.json({ error: 'Insufficient chart data' }, { status: 404 })
+  // 一條帶都畫不出來（TTM 全為負）才算沒有圖——只有部分期間為負時仍要回傳，
+  // 那正是「帶斷掉、股價線續畫」想呈現的東西
+  if (!chartData.some(d => d.cheap !== null))
+    return NextResponse.json({ error: 'Insufficient chart data' }, { status: 404 })
 
   return NextResponse.json({ chartData, valuation: val })
 }

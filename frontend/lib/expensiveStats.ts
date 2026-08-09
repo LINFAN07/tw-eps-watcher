@@ -4,6 +4,6 @@
 
 export const EXPENSIVE_STATS = {
   horizon: 12,
-  n: 29683,
-  excess: 2.16,
+  n: 29249,
+  excess: 1.95,
 } as const
