@@ -13,7 +13,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { backAdjust, type ExEvent } from '../frontend/lib/priceAdjust'
-import { reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
+import { availableDate, reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
 
 interface AdjustCase {
   name: string
@@ -37,6 +37,13 @@ interface TtmPeriodsCase {
   source: string
   period_ends: string[]
   expect: string[] | null
+}
+
+interface AvailableDateCase {
+  name: string
+  source: string
+  period_end: string
+  expect: string
 }
 
 interface TtmMonthCase {
@@ -63,6 +70,7 @@ const fixture = JSON.parse(
   report_window: WindowCase[]
   ttm_periods: TtmPeriodsCase[]
   ttm_month_window: TtmMonthCase[]
+  available_date: AvailableDateCase[]
 }
 
 const failures: string[] = []
@@ -114,8 +122,21 @@ for (const c of fixture.ttm_month_window) {
   }
 }
 
+// 申報期限：兩邊給不同答案時，回測與訊號回放會對「那天算不算便宜」不一致
+console.log('\n=== availableDate ===')
+for (const c of fixture.available_date) {
+  const got = availableDate(c.period_end)
+  const ok = got === c.expect
+  console.log(`  ${ok ? '✓' : '✗'} ${c.name}`)
+  if (!ok) {
+    console.log(`      得到 ${got}，預期 ${c.expect}（${c.source}）`)
+    failures.push(c.name)
+  }
+}
+
 const total = fixture.back_adjust.length + fixture.report_window.length
   + fixture.ttm_periods.length + fixture.ttm_month_window.length
+  + fixture.available_date.length
 console.log(`\n${total - failures.length}/${total} 通過`)
 if (failures.length) {
   console.log('失敗：' + failures.join('、'))

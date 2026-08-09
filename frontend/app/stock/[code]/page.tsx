@@ -7,6 +7,7 @@ import WatchlistButton from '@/components/WatchlistButton'
 import YieldRiverChart from '@/components/YieldRiverChart'
 import AltRiverChart from '@/components/AltRiverChart'
 import RevenueChart from '@/components/RevenueChart'
+import SignalHistory from '@/components/SignalHistory'
 import PeerComparison, { type PeerRow } from '@/components/PeerComparison'
 
 interface Props {
@@ -166,6 +167,17 @@ export default async function StockPage({ params, searchParams }: Props) {
         <p className="text-xs text-gray-400 mt-2 px-1">
           綠線：便宜價｜藍線：合理價｜紅線：昂貴價｜黑線：實際收盤價。估值帶會隨每季財報更新而調整。
         </p>
+      </section>
+
+      {/* P/E 訊號回放。緊接在 P/E 河流圖之後：河流圖問「現在的位置」，
+          這一段問「以前站在這個位置時，後來怎麼了」，是同一個模型的兩種讀法。 */}
+      <section className="mb-8">
+        <h2 className="text-base font-semibold text-gray-700 mb-3">
+          過去被判「便宜」的時候（P/E）
+        </h2>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <SignalHistory code={code} />
+        </div>
       </section>
 
       {/* 殖利率河流圖 */}

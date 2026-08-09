@@ -201,6 +201,31 @@ def ttm_periods(period_ends) -> list | None:
     return None
 
 
+# ─────────────── 財報真正可得的日期 ───────────────
+
+# 主管機關的申報期限。半年報公司（興櫃）6/30 的期限是 8/31，
+# 取兩者較晚者以策保守——寧可晚一點才用，也不要偷看還沒公布的財報。
+_FILING_DEADLINE = {3: (0, 5, 15), 6: (0, 8, 31), 9: (0, 11, 14), 12: (1, 3, 31)}
+
+
+def available_date(period_end) -> str:
+    """
+    期末日 → 該期財報在市場上真正可得的日期（ISO 字串）。
+
+    直接拿期末日當可用日，等於讓任何「以當時資料重算」的東西偷看未來：
+    2026-04-30 不可能知道 2026Q1 的 EPS，那要到 5/15 才申報。
+
+    回測與前端的訊號回放都必須用這個，否則兩邊會對「那天算不算便宜」給出
+    不同答案（同 report_window 那次的分岔形狀）。
+    """
+    year, month = _year_of(period_end), _month_of(period_end)
+    if year is None or month is None or month not in _FILING_DEADLINE:
+        # 非季末月份代表資料本身有問題，出聲比安靜地給一個日期好
+        raise ValueError(f"不是合法的期末日：{period_end!r}")
+    offset, m, d = _FILING_DEADLINE[month]
+    return f"{year + offset:04d}-{m:02d}-{d:02d}"
+
+
 # ─────────────── 月度資料的 TTM 視窗（月營收） ───────────────
 #
 # 月營收沒有「揭露頻率」的問題——每家公司都是一個月一筆，所以規則單純得多：

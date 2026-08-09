@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from price_adjust import back_adjust
-from periodicity import ttm_windows   # TTM 視窗的單一來源
+from periodicity import available_date, ttm_windows   # TTM 視窗與申報期限的單一來源
 from calculate_alt_valuations import decumulate  # 現金流去累計：與生產同一份實作，不另寫
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -151,20 +151,6 @@ def load_all() -> dict:
 
 # ---------------------------------------------------------- 財報可用日對照
 
-def available_date(quarter_end: pd.Timestamp) -> pd.Timestamp:
-    """
-    財報在市場上真正可得的日期＝主管機關的申報期限。
-    Q1→5/15、Q2→8/14、Q3→11/14、Q4（年報）→次年 3/31。
-    半年報公司（興櫃）6/30 的期限為 8/31，取兩者較晚者以策保守。
-    直接拿季末日當可用日，等於讓回測偷看還沒公布的財報。
-    """
-    y, m = quarter_end.year, quarter_end.month
-    return {3:  pd.Timestamp(y, 5, 15),
-            6:  pd.Timestamp(y, 8, 31),
-            9:  pd.Timestamp(y, 11, 14),
-            12: pd.Timestamp(y + 1, 3, 31)}[m]
-
-
 # ------------------------------------------------------------ 面板組裝
 
 def adjusted_price_matrix(prices: pd.DataFrame, dividends: pd.DataFrame,
@@ -267,7 +253,8 @@ def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
         df["value"] = df[value_col]
 
     df = df.dropna(subset=["value"])
-    df["avail"] = df["quarter_end_date"].map(available_date)
+    # 申報期限（＝財報真正可得日）由 periodicity 提供，與前端的訊號回放共用同一份
+    df["avail"] = pd.to_datetime(df["quarter_end_date"].map(available_date))
 
     # 每個月末取最後一筆 avail ≤ 月末的值 → forward fill
     panel = (df.pivot_table(index="avail", columns="stock_id", values="value", aggfunc="last")

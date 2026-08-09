@@ -145,6 +145,32 @@ export function ttmPeriods(periodEnds: string[]): string[] | null {
   return null
 }
 
+// ─────────────── 財報真正可得的日期 ───────────────
+
+/**
+ * 主管機關的申報期限：[年份加幾年, 月, 日]。
+ * 半年報公司（興櫃）6/30 的期限是 8/31，取兩者較晚者以策保守。
+ */
+const FILING_DEADLINE: Record<number, [number, number, number]> = {
+  3: [0, 5, 15], 6: [0, 8, 31], 9: [0, 11, 14], 12: [1, 3, 31],
+}
+
+/**
+ * 期末日 → 該期財報在市場上真正可得的日期（ISO 字串）。
+ *
+ * 直接拿期末日當可用日，等於偷看未來：2026-04-30 不可能知道 2026Q1 的 EPS，
+ * 那要到 5/15 才申報。訊號回放（`/api/signals`）與 `backtest_valuation.py`
+ * 必須用同一份定義，否則兩邊對「那天算不算便宜」會給出不同答案。
+ */
+export function availableDate(periodEnd: string): string {
+  const deadline = FILING_DEADLINE[monthOf(periodEnd)]
+  // 非季末月份代表資料本身有問題，出聲比安靜地給一個日期好
+  if (!deadline) throw new Error(`不是合法的期末日：${periodEnd}`)
+  const [offset, month, day] = deadline
+  return `${String(yearOf(periodEnd) + offset).padStart(4, '0')}-`
+    + `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 // ─────────────── 月度資料的 TTM 視窗（月營收） ───────────────
 //
 // 月營收沒有揭露頻率的問題（每家每月一筆），規則單純：連續 12 個月，缺一個月就不算。

@@ -26,7 +26,8 @@ sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from price_adjust import back_adjust          # noqa: E402
-from periodicity import report_window, ttm_month_window, ttm_periods   # noqa: E402
+from periodicity import (available_date, report_window,               # noqa: E402
+                         ttm_month_window, ttm_periods)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "shared_cases.json")
 TOLERANCE = 0.01
@@ -78,8 +79,19 @@ def main() -> int:
             print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
             failures.append(c["name"])
 
+    # 申報期限：兩邊給不同答案時，回測與訊號回放會對「那天算不算便宜」不一致
+    print("\n=== available_date ===")
+    for c in cases["available_date"]:
+        got = available_date(c["period_end"])
+        ok = got == c["expect"]
+        print(f"  {'✓' if ok else '✗'} {c['name']}")
+        if not ok:
+            print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
+            failures.append(c["name"])
+
     total = sum(len(cases[k]) for k in
-                ("back_adjust", "report_window", "ttm_periods", "ttm_month_window"))
+                ("back_adjust", "report_window", "ttm_periods", "ttm_month_window",
+                 "available_date"))
     print(f"\n{total - len(failures)}/{total} 通過")
     if failures:
         print("失敗：" + "、".join(failures))
