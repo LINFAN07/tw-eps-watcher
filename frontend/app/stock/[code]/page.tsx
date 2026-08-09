@@ -6,6 +6,7 @@ import PERiverChart from '@/components/PERiverChart'
 import WatchlistButton from '@/components/WatchlistButton'
 import YieldRiverChart from '@/components/YieldRiverChart'
 import AltRiverChart from '@/components/AltRiverChart'
+import RevenueChart from '@/components/RevenueChart'
 import PeerComparison, { type PeerRow } from '@/components/PeerComparison'
 
 interface Props {
@@ -212,7 +213,7 @@ export default async function StockPage({ params, searchParams }: Props) {
 
       {/* P/FCF 河流圖（有資料時才顯示） */}
       {valuation?.pfcf_cheap_pfcf && (
-        <section>
+        <section className="mb-8">
           <h2 className="text-base font-semibold text-gray-700 mb-3">
             股價自由現金流比河流圖（P/FCF，10 年）
           </h2>
@@ -225,6 +226,22 @@ export default async function StockPage({ params, searchParams }: Props) {
           </p>
         </section>
       )}
+
+      {/* 月營收與年增率。
+          放在所有估值帶之後：上面五段回答「現在貴不貴」，這一段回答「生意在成長嗎」，
+          是不同的問題。它也是全頁唯一每月更新的資料，其餘都要等財報。 */}
+      <section>
+        <h2 className="text-base font-semibold text-gray-700 mb-3">月營收與年增率（近 3 年）</h2>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <RevenueChart code={code} />
+        </div>
+        <p className="text-xs text-gray-400 mt-2 px-1">
+          藍柱：當月營收｜橘線：與去年同月相比的年增率。營收領先財報約一個半月，是最快看到經營變化的數字，
+          但單月易受出貨節奏影響，累計年增率較能看出趨勢。
+          證券、保險、建設等業別的單月營收可能為負（含評價損益、退屋沖銷），
+          去年同期為零或負數時年增率不適用，圖上會斷開而不是畫成 0。
+        </p>
+      </section>
     </main>
   )
 }

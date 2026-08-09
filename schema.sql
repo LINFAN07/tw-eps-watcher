@@ -87,11 +87,15 @@ CREATE TABLE IF NOT EXISTS balance_sheet_quarterly (
 );
 -- （idx_bsq_stock_date 已移除：與主鍵 (stock_id, quarter_end_date) 重複）
 
--- 月營收（供 P/S 估值用；revenue 單位：千元）
+-- 月營收（供 P/S 估值與月營收年增率用；revenue 單位：元）
+-- ⚠️ 這裡原本寫「千元」，是錯的（2026-08-09 更正）。來源 OpenAPI 給的是千元，
+-- 下載端已乘 1000 才寫入。實測台積電 2026-06 為 442,679,969,000（4,427 億元），
+-- 當成千元會變成 442 兆。audit_external.check_revenue() 的比對也是以元為基準
+-- （2,320 筆 0 不符），以那裡為準。
 CREATE TABLE IF NOT EXISTS monthly_revenue (
   stock_id   VARCHAR(10) NOT NULL REFERENCES stocks(stock_id) ON DELETE CASCADE,
   year_month DATE        NOT NULL,  -- 該月第一天，例如 2024-01-01
-  revenue    BIGINT      NOT NULL,  -- 月營收（千元）
+  revenue    BIGINT      NOT NULL,  -- 月營收（元）。可為負：券商含評價損益、保險含投資損益、建設有退屋沖銷
   PRIMARY KEY (stock_id, year_month)
 );
 -- （idx_rev_stock_month 已移除：與主鍵 (stock_id, year_month) 重複）

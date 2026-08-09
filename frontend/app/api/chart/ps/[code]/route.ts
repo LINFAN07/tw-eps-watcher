@@ -44,7 +44,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
   if (!listedShares || listedShares <= 0)
     return NextResponse.json({ error: '流通股數資料不足' }, { status: 404 })
 
-  // 月營收序列（千元）
+  // 月營收序列（元；與下方第 72 行的換算一致。註解原寫「千元」為誤，2026-08-09 更正）
   const { data: revenueRaw } = await db.from('monthly_revenue')
     .select('year_month,revenue')
     .eq('stock_id', code)

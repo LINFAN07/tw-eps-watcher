@@ -74,6 +74,9 @@ NO_SCHEDULE_OK = {
     # 改動 TTM／還原／樣本集合之後必須手動重跑並比對判讀條件（見腳本 docstring）。
     "backtest_discount_bands.py":     "門檻校準用；結論為手寫進 schema.sql 的常數，非自動生成欄位",
     "audit_oos_premium_bands.py":     "一次性樣本外檢驗（溢價 2~3 倍該不該做成產品）；只輸出 CSV，不維護任何欄位",
+    # 結論是「不做榜」，因此沒有任何線上數字依賴它——上面那個「手寫常數會過期」
+    # 的共同盲區在這一支不成立。要重開營收成長榜的討論時手動重跑即可。
+    "backtest_revenue_growth.py":     "一次性 go/no-go 回測（營收成長榜該不該做，結論為否）；只輸出 CSV，不維護任何欄位",
 }
 # backtest_expensive.py 與 audit_oos_persistence.py 已於 2026-08-07 移出本清單，
 # 改掛 recalc_chain.yml：它們現在各自產生一份 .ts 供前端比對手寫結論，

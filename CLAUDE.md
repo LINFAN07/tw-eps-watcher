@@ -95,7 +95,7 @@ C 除權息還原。2026-07-22 首次執行即抓出面額寫死造成 23% 的�
 ```
 tw-eps-watcher/
 ├── scripts/           # Python 後端腳本（資料下載 + 估值計算）
-├── frontend/          # Next.js 15 前端（Tailwind + Recharts）
+├── frontend/          # Next.js 16 前端（Tailwind + Recharts）
 ├── schema.sql         # 完整資料庫 Schema（含 ALTER TABLE 擴充語句）
 ├── .env               # SUPABASE_URL / SUPABASE_KEY / FINMIND_TOKEN
 └── TODO.md            # 功能開發進度
@@ -197,6 +197,7 @@ tw-eps-watcher/
 | `quarterly_eps_update.py` | 財報季更新 eps_quarterly，重算 P/E 估值 |
 | `backtest_valuation.py` | 估值訊號回測（驗證「便宜」是否真的賺）。**不掛排程**，需要重驗時手動跑；輸出 `backtest_results/` 與前端用的 `frontend/lib/backtestStats.ts` |
 | `backtest_expensive.py` | 「昂貴」訊號回測（驗證「該不該賣」）。結論是**否決高估榜**，見下方「昂貴不是該賣」。不掛排程、不覆寫上一列的輸出 |
+| `backtest_revenue_growth.py` | 「連續 N 月營收年增為正」訊號回測。結論是**否決營收成長榜**（四項判準 0/4），見下方「營收成長不是選股訊號」。不掛排程、不覆寫上兩列的輸出 |
 
 ### FinMind 速率限制
 
@@ -229,7 +230,7 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 
 ---
 
-## 前端架構（frontend/，Next.js 15）
+## 前端架構（frontend/，Next.js 16）
 
 ### API 路由（app/api/）
 
@@ -241,9 +242,11 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 | `/api/chart/[code]` | P/E 河流圖資料（月採樣，Point[]） |
 | `/api/chart/pb/[code]` | P/B 河流圖資料 |
 | `/api/chart/ps/[code]` | P/S 河流圖資料 |
+| `/api/chart/pfcf/[code]` | P/FCF 河流圖資料 |
 | `/api/yield-chart/[code]` | 殖利率河流圖資料 |
+| `/api/revenue/[code]` | 月營收與年增率（近 3 年 `points[]` ＋ `summary`）**格式與 chart API 不同** |
 
-所有 chart API 回傳格式相同：
+所有 chart API 回傳格式相同（`/api/revenue` 不在此列）：
 ```typescript
 { chartData: { date, price, cheap, fair, expensive }[], valuation: {...} }
 ```
@@ -283,6 +286,10 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 4. 殖利率河流圖（10 年）
 5. P/B 河流圖（有資料時才顯示）
 6. P/S 河流圖（有資料時才顯示）
+7. P/FCF 河流圖（有資料時才顯示）
+8. 月營收與年增率（近 3 年，恆顯示）
+   —— 前七段回答「現在貴不貴」，這一段回答「生意在成長嗎」，是不同的問題；
+   它也是全頁唯一每月更新的資料，其餘都要等財報。
 
 ---
 
@@ -504,6 +511,25 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
   順帶推翻一個直覺：原本假設「TTM EPS 趨近零會用算術假象污染高估榜」
   （1516 川飛 EPS 0.01 元 → 溢價 42.7 倍），但分層後 EPS <0.5 元與 ≥0.5 元的
   同月超額是 +1.54% 對 +1.82%，**總體上沒有污染**，個案不可外推成系統性問題。
+- **「營收成長」不是選股訊號，成長榜已驗過並否決**：2026-08-09 回測
+  （`scripts/backtest_revenue_growth.py`，判準四項寫在檔頭、先訂再看、由程式印結論）。
+  訊號＝連續 N 個月營收年增為正，N 取 3／6／12。判準同樣用**同月對照**——
+  營收成長訊號會擠在景氣擴張的月份，直接比十年母體會把行情誤讀成選股能力。
+
+  **四項全數未通過（0/4）**。同月超額中位（持有 12 個月）：連續 3 月 **−0.18%**、
+  6 月 −1.45%、12 月 −0.85%；持有 24 個月則是 −2.01／−4.39／−7.19。
+  勝過 0050 的比率全在 41.8~50.0%，沒有一格贏過擲硬幣。
+
+  **只能說「沒有正效果」，不可說「成長越久越糟」**：反單調只出現在持有 24 個月
+  （−2.01 → −4.39 → −7.19），6 與 12 個月毫無型態。一個型態只在三個持有期
+  中的一個成立，那是觀察不是規律。
+
+  **倖存者偏差在這裡是雙向的，不可照抄「昂貴」那條的單向推論**：一次性清掉的
+  下市股不在母體（超額被低估）、現存 120 支已標記 `delisted_at` 者價格凍結卻
+  仍在母體（超額被高估，實測 0.20pp）。結論的可信度來自四項判準全數落空，
+  不是來自任何單一數字。
+
+  個股頁的月營收圖照常保留——**那是查詢不是推薦**（同 `pe_reliable` 的處理原則）。
 - **下市股會往榜首跑**：價格凍結在最後一個交易日，目標價卻仍隨財報更新，
   折價因此越算越誇張。2026-07-21 實測 120 檔已下市（4.9%），佔據 P/E 便宜榜前 6 名中 4 名。
   一律以 `stocks.delisted_at is null` 過濾（由 `daily_price_update.mark_delisted()` 每日維護）。
@@ -526,4 +552,8 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 - **Supabase upsert 會先試 INSERT**：只帶主鍵與少數欄位的 upsert，會在衝突解析【之前】
   就違反其他欄位的 NOT NULL 約束（`stocks.name`）。更新既有列請用
   `.update().in_("stock_id", chunk)` 分批，不要用 upsert。
-- **Next.js 15 params**：`params` 是 `Promise<{code: string}>`，必須 `await params`
+- **Next.js 16 params**：`params` 是 `Promise<{code: string}>`，必須 `await params`
+  （16 沿用 15 的非同步形式；16 另提供 `RouteContext<'/api/x/[code]'>` 型別輔助，
+  現有路由未採用，新增時比照既有寫法即可）。
+  **`frontend/AGENTS.md` 要求動前端程式碼前先讀 `node_modules/next/dist/docs/`**——
+  實際版本是 16.2.9，破壞性變更清單在 `01-app/02-guides/upgrading/version-16.md`
