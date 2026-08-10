@@ -104,8 +104,13 @@ function windowEndingAt(ordered: string[], coverage: Map<string, number>,
   for (let i = ordered.indexOf(end); i >= 0; i--) {
     const period = ordered[i]
     const span = coverage.get(period)!
-    // 連續性：後一期的季序號必須正好比前一期多出「前一期涵蓋的季數」
-    if (window.length && quarterIndex(window[0]) - quarterIndex(period) !== span) return null
+    // 連續性：期別 e 涵蓋的季區間是 [qi(e) - coverage[e] + 1, qi(e)]，
+    // 兩期首尾相接 ⟺ 後一期的起點 = 前一期的終點 + 1 ⟺
+    // qi(後) - qi(前) === coverage[【後】]。
+    // 2026-08-10 修正：原本用 span（＝前一期的 coverage）。純季報全是 1、
+    // 純半年報全是 2，前後相等所以錯誤被完全掩蓋，只有【跨頻率邊界】才顯現。
+    if (window.length
+        && quarterIndex(window[0]) - quarterIndex(period) !== coverage.get(window[0])) return null
     window.unshift(period)
     total += span
     if (total === TTM_QUARTERS) return window
@@ -131,6 +136,36 @@ export function ttmWindows(periodEnds: string[]): Map<string, string[] | null> {
  * 再舊的 TTM 配今天的股價已無意義。
  */
 /**
+ * 由新到舊取最多 count 組【互不重疊且連續相鄰】的完整 12 個月期別視窗。
+ *
+ * 「近 N 年」一律問這支，不要寫 `slice(-w * N)`。後者取的是「最近 w×N 列」，
+ * 而列數要換算成年數的前提是**每列涵蓋的期間相同**——公司改變揭露頻率時
+ * 這個前提就不成立（半年報那幾列每列約等於兩季獲利，平均會被拉高）。
+ *
+ * 斷在缺口就停，**不跳過缺口繼續往前找**：跳過的話「近 N 年」會混入更早的
+ * 年度，而呼叫端拿到的清單長度看起來仍然正常，無從察覺。
+ */
+export function annualWindows(periodEnds: string[], count: number): string[][] {
+  const ends = [...new Set(periodEnds.filter(Boolean))].sort(
+    (a, b) => quarterIndex(a) - quarterIndex(b))
+  const coverage = coverageOf(ends)
+  const ordered = [...coverage.keys()].sort((a, b) => quarterIndex(a) - quarterIndex(b))
+  const windows: string[][] = []
+  let current = ttmPeriods(ends)
+  while (current && windows.length < count) {
+    windows.push(current)
+    const idx = ordered.indexOf(current[0])
+    if (idx <= 0) break
+    const prevEnd = ordered[idx - 1]
+    // 相鄰性：跨距要等於【current[0]】的涵蓋季數，不是 prevEnd 的
+    // （理由同 windowEndingAt）。跨過整年缺洞時不成立
+    if (quarterIndex(current[0]) - quarterIndex(prevEnd) !== coverage.get(current[0])) break
+    current = windowEndingAt(ordered, coverage, prevEnd)
+  }
+  return windows
+}
+
+/**
  * 緊接在最近一組 12 個月【之前】的那組完整 12 個月（去年同期），湊不出回 null。
  *
  * **不可用「排序後往前退一格」代替**：那只保證前一組自己是 12 個月，不保證它
@@ -139,18 +174,8 @@ export function ttmWindows(periodEnds: string[]): Map<string, string[] | null> {
  * 例：半年報公司只有 2023 與 2025 兩年，退一格會拿 FY2023 當 FY2025 的去年同期。
  */
 export function previousTtmPeriods(periodEnds: string[]): string[] | null {
-  const ends = [...new Set(periodEnds.filter(Boolean))].sort(
-    (a, b) => quarterIndex(a) - quarterIndex(b))
-  const current = ttmPeriods(ends)
-  if (!current) return null
-  const coverage = coverageOf(ends)
-  const ordered = [...coverage.keys()].sort((a, b) => quarterIndex(a) - quarterIndex(b))
-  const idx = ordered.indexOf(current[0])
-  if (idx <= 0) return null
-  const prevEnd = ordered[idx - 1]
-  // 相鄰性：current 的第一期必須正好接在 prevEnd 之後，跨距等於 prevEnd 的涵蓋季數
-  if (quarterIndex(current[0]) - quarterIndex(prevEnd) !== coverage.get(prevEnd)) return null
-  return windowEndingAt(ordered, coverage, prevEnd)
+  const windows = annualWindows(periodEnds, 2)
+  return windows.length > 1 ? windows[1] : null
 }
 
 export function ttmPeriods(periodEnds: string[]): string[] | null {

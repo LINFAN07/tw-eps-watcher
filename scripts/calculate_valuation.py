@@ -18,7 +18,7 @@ from supabase import create_client
 import pandas as pd
 import numpy as np
 from price_adjust import back_adjust, unofficial_adjustments   # 除權息即時還原（不儲存，見 price_adjust.py）
-from periodicity import report_window, ttm_windows, ttm_periods   # TTM 視窗的單一來源
+from periodicity import annual_windows, ttm_windows, ttm_periods   # TTM 視窗的單一來源
 import ex_factors                      # 除權息還原因子（整表快取，避免逐股查詢）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -117,7 +117,8 @@ def filing_date(quarter_end: pd.Timestamp) -> pd.Timestamp:
       修這一項是為了【正確性】（消除 look-ahead），不是為了修正大偏差。
 
     ⚠️ 實作時的陷阱：不可直接把 eps 的 quarter_end_date 換成申報日。
-    _eps_window() 靠季度月份是否為 {6,12} 判斷半年報，換日期後月份變成 {3,8}，
+    periodicity 全靠季度月份組合判斷揭露頻率（{6,12} 為半年報），
+    換日期後月份變成 {3,8}，
     半年報會被誤判為季報、TTM 從 2 期變 4 期（等於把 2 年當 1 年），
     序列大幅縮短、P/E 腰斬。首次評估即因此誤得「興櫃股差 −44.7%、
     約 32 支會失去估值」的結論。正確做法是保留 quarter_end_date 供週期判斷，
@@ -176,17 +177,6 @@ def apply_share_factors(df: pd.DataFrame, value_col: str, factors: pd.DataFrame)
         factors, on="quarter_end_date", direction="backward",
     )
     return merged[value_col].astype(float) * merged["factor"].fillna(1.0).values
-
-
-def _eps_window(eps_df: pd.DataFrame) -> int:
-    """
-    一年有幾期（季報 4、半年報 2）。判定邏輯見 periodicity.report_window。
-
-    只剩 compute_normalized_eps 在用——它要的是「年化倍數」與「5 年等於幾期」，
-    那是頻率問題。**TTM 加總哪幾期不要用這個**，一律問 periodicity.ttm_periods：
-    頻率標籤答不了「哪幾期剛好是 12 個月」，公司改頻率時兩者會給出不同答案。
-    """
-    return report_window(eps_df["quarter_end_date"])
 
 
 def to_weekly(price_df: pd.DataFrame) -> pd.DataFrame:
@@ -259,16 +249,25 @@ def compute_normalized_eps(eps_df: pd.DataFrame) -> float | None:
     eps_quarterly.eps 存的是「單季」值，季均必須先乘上一個 TTM 週期的期數（季報 4／
     半年報 2）才能年化，否則就是拿「平均每季賺多少」去跟「這一年賺多少」比。
 
-    2026-07-21 事故：漏了這個 × w，季均被當年均用。判斷式 `ttm > normalized × 3`
+    2026-07-21 事故：漏了年化步驟，季均被當年均用。判斷式 `ttm > normalized × 3`
     實際變成 `ttm > 年均 × 0.75`，只要今年沒比五年均衰退 25% 以上就被標成
     「獲利高峰、P/E 不可信」——全市場 633 檔中招（修正後僅 5 檔），儒鴻、豐泰
     這類獲利穩定的公司也被誤標，連帶被踢出便宜排行榜與推薦模型。
+
+    2026-08-10 改用 annual_windows：原本寫 `tail(w * 5)`（最近 w×5 列）再取平均
+    後 × w 年化。列數換算成年數的前提是「每列涵蓋的期間相同」，而半年報轉季報的
+    公司 w=4、最近 20 列會回頭撈到半年報那幾列，每列約等於兩季獲利 → 平均被拉高
+    → normalized_eps 高估。方向固定：谷底分支（ttm < normalized × 0.3）更容易觸發
+    且替代目標價更高 →【看起來比實際便宜】。
+    改成「每組 12 個月各自加總後取平均」，單位天生就是年度，
+    那個容易漏掉的 × w 也一併消失。
     """
-    w = _eps_window(eps_df)
-    recent = eps_df.tail(w * 5)["eps"].astype(float)
-    if len(recent) < w * 2:
+    windows = annual_windows(eps_df["quarter_end_date"], 5)
+    if len(windows) < 2:          # 不足 2 年資料
         return None
-    return float(recent.mean()) * w   # 季（或半年）均 → 年化，與 ttm_eps 同單位
+    by_date = dict(zip(eps_df["quarter_end_date"], eps_df["eps"].astype(float)))
+    annuals = [sum(by_date[d] for d in w) for w in windows]
+    return float(np.mean(annuals))
 
 
 def detect_nonrecurring(eps_df: pd.DataFrame) -> tuple[float, str | None]:

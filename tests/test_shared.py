@@ -26,8 +26,9 @@ sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from price_adjust import back_adjust          # noqa: E402
-from periodicity import (available_date, previous_ttm_periods,        # noqa: E402
-                         report_window, ttm_month_window, ttm_periods)
+from periodicity import (annual_windows, available_date,              # noqa: E402
+                         previous_ttm_periods, report_window,
+                         ttm_month_window, ttm_periods)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "shared_cases.json")
 TOLERANCE = 0.01
@@ -70,6 +71,17 @@ def main() -> int:
             print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
             failures.append(c["name"])
 
+    # 「近 N 年」的視窗。normalized_eps 用它取代 tail(w * 5)——
+    # 列數換算年數的前提是每列涵蓋期間相同，混頻公司不成立
+    print("\n=== annual_windows ===")
+    for c in cases["annual_windows"]:
+        got = annual_windows(c["period_ends"], c["count"])
+        ok = got == c["expect"]
+        print(f"  {'✓' if ok else '✗'} {c['name']}")
+        if not ok:
+            print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
+            failures.append(c["name"])
+
     # 去年同期：個股頁的 EPS 年增率用它當基期。相鄰性檢查是重點——
     # 少了它，中間缺一整年的公司會拿兩年前那組當基期而畫面毫無提示
     print("\n=== previous_ttm_periods ===")
@@ -100,9 +112,10 @@ def main() -> int:
             print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
             failures.append(c["name"])
 
-    total = sum(len(cases[k]) for k in
-                ("back_adjust", "report_window", "ttm_periods", "ttm_month_window",
-                 "available_date"))
+    # 由 fixture 自己數，不列舉 key：硬編清單漏更新時，新區塊的案例會照跑卻不計入
+    # 總數（2026-08-10 加 previous_ttm_periods／annual_windows 兩區時就漏了），
+    # 畫面顯示的通過數會比實際少，看起來像沒事
+    total = sum(len(v) for k, v in cases.items() if not k.startswith("_"))
     print(f"\n{total - len(failures)}/{total} 通過")
     if failures:
         print("失敗：" + "、".join(failures))

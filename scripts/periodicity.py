@@ -85,6 +85,14 @@ def report_window(quarter_ends: Iterable) -> int:
     """
     回傳 TTM 應加總的期數：半年報 2、季報 4。
 
+    ⚠️ **2026-08-10 起已無生產使用者**（最後一個是 calculate_valuation 的
+    `tail(w * 5)`，已改用 `annual_windows`）。要用它之前先問：你要的是不是其實是
+    `ttm_periods()`／`annual_windows()`？這支給的是「一年有幾期」這個**單一標籤**，
+    它答不了「哪幾期加起來剛好 12 個月」，而且標籤本身在混頻公司上會判錯——
+    6976 只有 8 期、實際是半年報，這支卻因最近 6 期含 3 月而回 4。
+    保留它是因為「一年有幾期」仍是個真問題（真要用時別自己重寫第十一份），
+    不是因為它還在用。
+
     quarter_ends 可以是 ISO 日期字串（"2026-03-31"）或 date/datetime，
     順序不拘，內部自行取最近 LOOKBACK 期。同一次呼叫請勿混用型別
     （排序需要可比較）。
@@ -147,8 +155,15 @@ def _window_ending_at(ordered: list, coverage: dict, end) -> list | None:
     """從 end 往前累加涵蓋季數，剛好 4 季就成立；跨過或不連續就是湊不出來"""
     window, total = [], 0
     for period in reversed(ordered[:ordered.index(end) + 1]):
-        # 連續性：後一期的季序號必須正好比前一期多出「前一期涵蓋的季數」
-        if window and _quarter_index(window[0]) - _quarter_index(period) != coverage[period]:
+        # 連續性：期別 e 涵蓋的季區間是 [qi(e) - coverage[e] + 1, qi(e)]，
+        # 兩期首尾相接 ⟺ 後一期的起點 = 前一期的終點 + 1 ⟺
+        # qi(後) - qi(前) == coverage[【後】]。
+        # 2026-08-10 修正：原本用 coverage[period]（前一期）。純季報全是 1、
+        # 純半年報全是 2，前後相等所以錯誤被完全掩蓋，只有【跨頻率邊界】才顯現：
+        # 半年報 2025-12（涵蓋 25Q3+Q4）接季報 2026-03（涵蓋 26Q1）確實相接，
+        # 卻因 coverage[2025-12]=2 ≠ 跨距 1 被判不相接 → 該湊得出的 12 個月
+        # 被判湊不出 → ttm_periods 退回上一組，TTM 無謂落後半年到一年。
+        if window and _quarter_index(window[0]) - _quarter_index(period) != coverage[window[0]]:
             return None
         window.insert(0, period)
         total += coverage[period]
@@ -178,6 +193,38 @@ def ttm_window(period_ends, end) -> list | None:
     return ttm_windows(period_ends).get(end)
 
 
+def annual_windows(period_ends, count: int) -> list[list]:
+    """
+    由新到舊取最多 count 組【互不重疊且連續相鄰】的完整 12 個月期別視窗。
+
+    「近 N 年」一律問這支，不要寫 `tail(w * N)`。後者取的是「最近 w×N 列」，
+    而列數要換算成年數的前提是**每列涵蓋的期間相同**——公司改變揭露頻率時
+    這個前提就不成立：半年報轉季報的公司 w=4，最近 20 列會回頭撈到半年報那幾列，
+    每列約等於兩季獲利，平均因此被拉高（2026-08-10 盤點發現於 normalized_eps）。
+
+    斷在缺口就停，**不跳過缺口繼續往前找**：跳過的話「近 5 年平均」會混入更早的
+    年度，而呼叫端拿到的清單長度看起來仍然正常，無從察覺。
+    """
+    ends = sorted({e for e in period_ends if e is not None and e == e},
+                  key=_quarter_index)
+    coverage = _coverage(ends)
+    ordered = sorted(coverage, key=_quarter_index)
+    windows: list[list] = []
+    current = ttm_periods(ends)
+    while current is not None and len(windows) < count:
+        windows.append(current)
+        idx = ordered.index(current[0])
+        if idx == 0:
+            break
+        prev_end = ordered[idx - 1]
+        # 相鄰性：跨距要等於【current[0]】的涵蓋季數，不是 prev_end 的
+        # （理由同 _window_ending_at）。跨過整年缺洞時不成立
+        if _quarter_index(current[0]) - _quarter_index(prev_end) != coverage[current[0]]:
+            break
+        current = _window_ending_at(ordered, coverage, prev_end)
+    return windows
+
+
 def previous_ttm_periods(period_ends) -> list | None:
     """
     緊接在最近一組 12 個月【之前】的那組完整 12 個月（去年同期），湊不出回 None。
@@ -187,21 +234,8 @@ def previous_ttm_periods(period_ends) -> list | None:
     「年增 N%」——值在合理範圍、內部一致性檢查全過，錯誤無從察覺。
     例：半年報公司只有 2023 與 2025 兩年，退一格會拿 FY2023 當 FY2025 的去年同期。
     """
-    ends = sorted({e for e in period_ends if e is not None and e == e},
-                  key=_quarter_index)
-    current = ttm_periods(ends)
-    if current is None:
-        return None
-    coverage = _coverage(ends)
-    ordered = sorted(coverage, key=_quarter_index)
-    idx = ordered.index(current[0])
-    if idx == 0:
-        return None
-    prev_end = ordered[idx - 1]
-    # 相鄰性：current 的第一期必須正好接在 prev_end 之後，跨距等於 prev_end 的涵蓋季數
-    if _quarter_index(current[0]) - _quarter_index(prev_end) != coverage[prev_end]:
-        return None
-    return _window_ending_at(ordered, coverage, prev_end)
+    windows = annual_windows(period_ends, 2)
+    return windows[1] if len(windows) > 1 else None
 
 
 def ttm_periods(period_ends) -> list | None:

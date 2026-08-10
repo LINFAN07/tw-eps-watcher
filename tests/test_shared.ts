@@ -13,7 +13,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { backAdjust, type ExEvent } from '../frontend/lib/priceAdjust'
-import { availableDate, previousTtmPeriods, reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
+import { annualWindows, availableDate, previousTtmPeriods, reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
 
 interface AdjustCase {
   name: string
@@ -37,6 +37,14 @@ interface TtmPeriodsCase {
   source: string
   period_ends: string[]
   expect: string[] | null
+}
+
+interface AnnualWindowsCase {
+  name: string
+  source: string
+  count: number
+  period_ends: string[]
+  expect: string[][]
 }
 
 interface AvailableDateCase {
@@ -70,6 +78,7 @@ const fixture = JSON.parse(
   report_window: WindowCase[]
   ttm_periods: TtmPeriodsCase[]
   previous_ttm_periods: TtmPeriodsCase[]
+  annual_windows: AnnualWindowsCase[]
   ttm_month_window: TtmMonthCase[]
   available_date: AvailableDateCase[]
 }
@@ -112,6 +121,20 @@ for (const c of fixture.ttm_periods) {
   }
 }
 
+// 「近 N 年」的視窗。normalized_eps 用它取代 tail(w * 5)——
+// 列數換算年數的前提是每列涵蓋期間相同，混頻公司不成立
+console.log('\n=== annualWindows ===')
+for (const c of fixture.annual_windows) {
+  const got = annualWindows(c.period_ends, c.count)
+  const ok = got.length === c.expect.length
+    && got.every((w, i) => sameList(w, c.expect[i]))
+  console.log(`  ${ok ? '✓' : '✗'} ${c.name}`)
+  if (!ok) {
+    console.log(`      得到 ${JSON.stringify(got)}，預期 ${JSON.stringify(c.expect)}（${c.source}）`)
+    failures.push(c.name)
+  }
+}
+
 // 去年同期：個股頁的 EPS 年增率用它當基期。相鄰性檢查是重點——
 // 少了它，中間缺一整年的公司會拿兩年前那組當基期而畫面毫無提示
 console.log('\n=== previousTtmPeriods ===')
@@ -148,9 +171,12 @@ for (const c of fixture.available_date) {
   }
 }
 
-const total = fixture.back_adjust.length + fixture.report_window.length
-  + fixture.ttm_periods.length + fixture.ttm_month_window.length
-  + fixture.available_date.length
+// 由 fixture 自己數，不列舉 key：硬編清單漏更新時，新區塊的案例會照跑卻不計入
+// 總數（2026-08-10 加 previousTtmPeriods／annualWindows 兩區時就漏了），
+// 畫面顯示的通過數會比實際少，看起來像沒事
+const total = Object.entries(fixture as Record<string, unknown>)
+  .filter(([k, v]) => !k.startsWith('_') && Array.isArray(v))
+  .reduce((n, [, v]) => n + (v as unknown[]).length, 0)
 console.log(`\n${total - failures.length}/${total} 通過`)
 if (failures.length) {
   console.log('失敗：' + failures.join('、'))
