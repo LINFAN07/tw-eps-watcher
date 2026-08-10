@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getSupabase } from '@/lib/supabase'
+import { ttmPeriods, previousTtmPeriods } from '@/lib/periodicity'
 import ValuationCard from '@/components/ValuationCard'
 import PERiverChart from '@/components/PERiverChart'
 import WatchlistButton from '@/components/WatchlistButton'
@@ -52,9 +53,10 @@ async function fetchStock(code: string) {
          capitalRes] = await Promise.all([
     db.from('stocks').select('stock_id,name,market,industry,listed_shares').eq('stock_id', code).single(),
     db.from('valuations').select('*').eq('stock_id', code).single(),
-    // 取最近 8 季：前 4 季組成 TTM，後 4 季用來比較去年同期趨勢
+    // 不下 limit：視窗由 periodicity 依實際期別決定，抓取階段先截斷的話
+    // 下游就湊不出正確視窗了（單股約 40 列，成本可忽略；其餘四個路由亦同）
     db.from('eps_quarterly').select('quarter_end_date,eps')
-      .eq('stock_id', code).order('quarter_end_date', { ascending: false }).limit(8),
+      .eq('stock_id', code).order('quarter_end_date', { ascending: false }),
     // 各項資料的實際基準日期（顯示在網站上，避免用寫入時間誤導使用者）
     // 股價日期不在此查：現價的來源日直接存在 valuations.price_date
     latestDate(db, 'balance_sheet_quarterly', 'quarter_end_date', code),
@@ -67,7 +69,18 @@ async function fetchStock(code: string) {
     db.from('unadjusted_capital_events')
       .select('event_date,share_ratio,adjustable').eq('stock_id', code).order('event_date'),
   ])
-  const eps8 = epsRes.data ?? []
+  const epsRows = epsRes.data ?? []
+  // TTM 視窗一律問 periodicity，與 ValuationCard 上方的 ttm_eps（Python 端算的）
+  // 同一套規則。原本寫 slice(0,4)／slice(4,8)：半年報公司會取到兩年，而卡片上
+  // 「相加即為上方 EPS」的承諾當場破功；轉換頻率的公司則橫跨 15~21 個月。
+  const ends = epsRows.map(r => r.quarter_end_date)
+  const ttmWin = ttmPeriods(ends)
+  const prevWin = previousTtmPeriods(ends)
+  // 視窗由舊到新，反轉成「最新在前」以維持原本的顯示順序
+  const byDate = new Map(epsRows.map(r => [r.quarter_end_date, r]))
+  // flatMap + ?? [] 同時完成「查表」與「排除查不到的」，且型別自動收窄
+  const pick = (win: string[] | null) => (win ?? []).flatMap(d => byDate.get(d) ?? []).reverse()
+
   // 同業資料要等 stock 查完才知道產業，故獨立於上面的 Promise.all
   const peers = await fetchPeers(stockRes.data?.industry ?? null)
   return {
@@ -75,10 +88,12 @@ async function fetchStock(code: string) {
     valuation: valRes.data,
     capitalEvents: capitalRes.data ?? [],
     peers,
-    ttmQuarters: eps8.slice(0, 4),
-    prevYearQuarters: eps8.slice(4, 8),
+    ttmQuarters: pick(ttmWin),
+    prevYearQuarters: pick(prevWin),
     asOf: {
-      pe:    eps8[0]?.quarter_end_date ?? null,
+      // 視窗最新一期，不是 epsRows[0]：視窗湊不出來時會退回上一組，
+      // 取整份資料的最新一期會把基準日標示得比實際新
+      pe:    ttmWin?.[ttmWin.length - 1] ?? null,
       pb:    pbDate,
       ps:    psDate,
       pfcf:  pfcfDate,

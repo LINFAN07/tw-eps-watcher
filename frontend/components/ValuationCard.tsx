@@ -312,7 +312,9 @@ export default function ValuationCard({
   const fixedEvents  = capitalEvents.filter(e => e.adjustable)
   const brokenEvents = capitalEvents.filter(e => !e.adjustable)
 
-  const prevTTM = prevYearQuarters.length === 4
+  // 非空即代表 page.tsx 已湊出完整 12 個月（湊不出時給空陣列）。
+  // 不可判 length === 4：半年報公司的一年是 2 期，那樣會永遠算不出年增率
+  const prevTTM = prevYearQuarters.length > 0
     ? prevYearQuarters.reduce((s, q) => s + q.eps, 0)
     : null
   const trendPct = prevTTM != null && prevTTM !== 0
@@ -568,8 +570,12 @@ export default function ValuationCard({
         </div>
       )}
 
-      {/* 近 4 季 EPS 明細（P/E 頁籤專屬）*/}
-      {active === 'pe' && ttmQuarters.length === 4 && (
+      {/* 近四季 EPS 明細（P/E 頁籤專屬）。期數依公司揭露頻率而異：
+          季報 4 期、半年報 2 期，都是 12 個月，故不可判 length === 4。
+          文案沿用全站的「近四季」（＝TTM 的口語說法，見上方標籤與 P/S、P/FCF
+          各處）——半年報公司會看到 2 格配「近四季」，不精確但全站一致；
+          要改是一張獨立的文案工單，不可只改這一句造成卡片內自相矛盾 */}
+      {active === 'pe' && ttmQuarters.length > 0 && (
         <div className="mt-3 pt-3 border-t border-current/10">
           <p className="text-xs text-gray-400 mb-2">近四季 EPS 明細（相加即為上方的近四季 EPS）</p>
           <div className="flex gap-2">

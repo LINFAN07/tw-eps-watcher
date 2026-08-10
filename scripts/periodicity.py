@@ -178,6 +178,32 @@ def ttm_window(period_ends, end) -> list | None:
     return ttm_windows(period_ends).get(end)
 
 
+def previous_ttm_periods(period_ends) -> list | None:
+    """
+    緊接在最近一組 12 個月【之前】的那組完整 12 個月（去年同期），湊不出回 None。
+
+    **不可用「排序後往前退一格」代替**：那只保證前一組自己是 12 個月，不保證它
+    緊接在後一組之前。中間缺一整年時會拿到兩年前那組，而畫面上照樣顯示
+    「年增 N%」——值在合理範圍、內部一致性檢查全過，錯誤無從察覺。
+    例：半年報公司只有 2023 與 2025 兩年，退一格會拿 FY2023 當 FY2025 的去年同期。
+    """
+    ends = sorted({e for e in period_ends if e is not None and e == e},
+                  key=_quarter_index)
+    current = ttm_periods(ends)
+    if current is None:
+        return None
+    coverage = _coverage(ends)
+    ordered = sorted(coverage, key=_quarter_index)
+    idx = ordered.index(current[0])
+    if idx == 0:
+        return None
+    prev_end = ordered[idx - 1]
+    # 相鄰性：current 的第一期必須正好接在 prev_end 之後，跨距等於 prev_end 的涵蓋季數
+    if _quarter_index(current[0]) - _quarter_index(prev_end) != coverage[prev_end]:
+        return None
+    return _window_ending_at(ordered, coverage, prev_end)
+
+
 def ttm_periods(period_ends) -> list | None:
     """
     最近一組完整 12 個月的期別。最新一期湊不出來時往前退，

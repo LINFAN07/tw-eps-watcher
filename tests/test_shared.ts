@@ -13,7 +13,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { backAdjust, type ExEvent } from '../frontend/lib/priceAdjust'
-import { availableDate, reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
+import { availableDate, previousTtmPeriods, reportWindow, ttmPeriods, ttmMonthWindow } from '../frontend/lib/periodicity'
 
 interface AdjustCase {
   name: string
@@ -69,6 +69,7 @@ const fixture = JSON.parse(
   back_adjust: AdjustCase[]
   report_window: WindowCase[]
   ttm_periods: TtmPeriodsCase[]
+  previous_ttm_periods: TtmPeriodsCase[]
   ttm_month_window: TtmMonthCase[]
   available_date: AvailableDateCase[]
 }
@@ -103,6 +104,19 @@ for (const c of fixture.report_window) {
 console.log('\n=== ttmPeriods ===')
 for (const c of fixture.ttm_periods) {
   const got = ttmPeriods(c.period_ends)
+  const ok = sameList(got, c.expect)
+  console.log(`  ${ok ? '✓' : '✗'} ${c.name}`)
+  if (!ok) {
+    console.log(`      得到 ${show(got)}，預期 ${show(c.expect)}（${c.source}）`)
+    failures.push(c.name)
+  }
+}
+
+// 去年同期：個股頁的 EPS 年增率用它當基期。相鄰性檢查是重點——
+// 少了它，中間缺一整年的公司會拿兩年前那組當基期而畫面毫無提示
+console.log('\n=== previousTtmPeriods ===')
+for (const c of fixture.previous_ttm_periods) {
+  const got = previousTtmPeriods(c.period_ends)
   const ok = sameList(got, c.expect)
   console.log(`  ${ok ? '✓' : '✗'} ${c.name}`)
   if (!ok) {

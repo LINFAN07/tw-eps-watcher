@@ -18,6 +18,9 @@ import sys
 from dotenv import load_dotenv
 from supabase import create_client
 
+sys.path.insert(0, os.path.dirname(__file__))
+from periodicity import ttm_periods   # TTM 視窗的單一來源，不可自己寫
+
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -29,13 +32,20 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def fetch_income_data() -> dict[str, list[dict]]:
-    """取得所有股票近 4 季有效損益資料，按股票分組"""
+    """
+    取得所有股票的有效損益資料，按股票分組。
+
+    刻意【不】在此截斷期數：TTM 要取哪幾期由 periodicity 依實際期別決定，
+    抓取階段先砍成 4 列的話，下游就再也湊不出正確視窗了。
+    排序用 stock_id + quarter_end_date：只按日期排，同日多支股票的跨頁順序
+    Postgres 不保證一致，會重複或遺漏（見 CLAUDE.md 平台限制）。
+    """
     all_rows: list[dict] = []
     offset = 0
     while True:
         resp = supabase.table("income_statement_quarterly") \
             .select("stock_id,quarter_end_date,operating_income,net_income") \
-            .order("quarter_end_date", desc=True) \
+            .order("stock_id").order("quarter_end_date") \
             .range(offset, offset + 999) \
             .execute()
         batch = resp.data or []
@@ -44,27 +54,32 @@ def fetch_income_data() -> dict[str, list[dict]]:
             break
         offset += 1000
 
-    # 按股票分組，只保留最新 4 季
     by_stock: dict[str, list[dict]] = {}
     for r in all_rows:
         # 兩個欄位都有值才納入計算
         if r["operating_income"] is None or r["net_income"] is None:
             continue
-        sid = r["stock_id"]
-        if sid not in by_stock:
-            by_stock[sid] = []
-        if len(by_stock[sid]) < 4:
-            by_stock[sid].append(r)
+        by_stock.setdefault(r["stock_id"], []).append(r)
     return by_stock
 
 
 def compute_ttm_ratio(quarters: list[dict]) -> float | None:
-    """計算 TTM 業外佔比。回傳 None 表示資料不足或條件不符"""
-    if len(quarters) < 4:
+    """
+    計算 TTM 業外佔比。回傳 None 表示資料不足或條件不符。
+
+    期別問 periodicity.ttm_periods()——原本寫 `quarters[:4]`（最近 4 列），
+    半年報公司會取到【兩年】，轉換頻率的公司則橫跨 15~21 個月。
+    分子分母同窗使比值部分自我抵消，不像營業利益率那樣整批高估一倍，
+    但三個觸發條件（淨利>0、淨利>營業利益、佔比>30%）全都建在錯誤的視窗上，
+    且半年報公司要累積兩年才會有任何警告——顯示給使用者的文字說的是 TTM。
+    """
+    ends = ttm_periods(q["quarter_end_date"] for q in quarters)
+    if ends is None:
         return None
 
-    ttm_op  = sum(float(q["operating_income"]) for q in quarters[:4])
-    ttm_net = sum(float(q["net_income"])        for q in quarters[:4])
+    window  = [q for q in quarters if q["quarter_end_date"] in ends]
+    ttm_op  = sum(float(q["operating_income"]) for q in window)
+    ttm_net = sum(float(q["net_income"])       for q in window)
 
     if ttm_net <= 0:
         return None                          # 整體虧損，P/E 已有其他警告處理

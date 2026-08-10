@@ -26,8 +26,8 @@ sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from price_adjust import back_adjust          # noqa: E402
-from periodicity import (available_date, report_window,               # noqa: E402
-                         ttm_month_window, ttm_periods)
+from periodicity import (available_date, previous_ttm_periods,        # noqa: E402
+                         report_window, ttm_month_window, ttm_periods)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "shared_cases.json")
 TOLERANCE = 0.01
@@ -64,6 +64,17 @@ def main() -> int:
     print("\n=== ttm_periods ===")
     for c in cases["ttm_periods"]:
         got = ttm_periods(c["period_ends"])
+        ok = got == c["expect"]
+        print(f"  {'✓' if ok else '✗'} {c['name']}")
+        if not ok:
+            print(f"      得到 {got}，預期 {c['expect']}（{c['source']}）")
+            failures.append(c["name"])
+
+    # 去年同期：個股頁的 EPS 年增率用它當基期。相鄰性檢查是重點——
+    # 少了它，中間缺一整年的公司會拿兩年前那組當基期而畫面毫無提示
+    print("\n=== previous_ttm_periods ===")
+    for c in cases["previous_ttm_periods"]:
+        got = previous_ttm_periods(c["period_ends"])
         ok = got == c["expect"]
         print(f"  {'✓' if ok else '✗'} {c['name']}")
         if not ok:

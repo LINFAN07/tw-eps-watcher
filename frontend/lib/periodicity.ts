@@ -130,6 +130,29 @@ export function ttmWindows(periodEnds: string[]): Map<string, string[] | null> {
  * 最近一組完整 12 個月的期別。最新一期湊不出來時往前退，但最多退 12 個月——
  * 再舊的 TTM 配今天的股價已無意義。
  */
+/**
+ * 緊接在最近一組 12 個月【之前】的那組完整 12 個月（去年同期），湊不出回 null。
+ *
+ * **不可用「排序後往前退一格」代替**：那只保證前一組自己是 12 個月，不保證它
+ * 緊接在後一組之前。中間缺一整年時會拿到兩年前那組，而畫面上照樣顯示
+ * 「年增 N%」——值在合理範圍、內部一致性檢查全過，錯誤無從察覺。
+ * 例：半年報公司只有 2023 與 2025 兩年，退一格會拿 FY2023 當 FY2025 的去年同期。
+ */
+export function previousTtmPeriods(periodEnds: string[]): string[] | null {
+  const ends = [...new Set(periodEnds.filter(Boolean))].sort(
+    (a, b) => quarterIndex(a) - quarterIndex(b))
+  const current = ttmPeriods(ends)
+  if (!current) return null
+  const coverage = coverageOf(ends)
+  const ordered = [...coverage.keys()].sort((a, b) => quarterIndex(a) - quarterIndex(b))
+  const idx = ordered.indexOf(current[0])
+  if (idx <= 0) return null
+  const prevEnd = ordered[idx - 1]
+  // 相鄰性：current 的第一期必須正好接在 prevEnd 之後，跨距等於 prevEnd 的涵蓋季數
+  if (quarterIndex(current[0]) - quarterIndex(prevEnd) !== coverage.get(prevEnd)) return null
+  return windowEndingAt(ordered, coverage, prevEnd)
+}
+
 export function ttmPeriods(periodEnds: string[]): string[] | null {
   const ends = periodEnds.filter(Boolean)
   if (!ends.length) return null
