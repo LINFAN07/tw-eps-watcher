@@ -21,6 +21,7 @@
 跳過已取得的股票後，越接近季末已申報者越多，執行時間逐次遞減。
 """
 
+import argparse
 import os
 import sys
 import time
@@ -120,11 +121,31 @@ def target_quarter(today: date) -> str | None:
     return None
 
 
-def run():
+def report_remaining(count: int):
+    """把剩餘支數寫進 GITHUB_OUTPUT，供 workflow 決定要不要啟動接力 job"""
+    path = os.getenv("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"remaining={count}\n")
+
+
+def run(time_budget: float | None = None):
+    """
+    time_budget：抓取階段的時間預算（分鐘）。用完就停止抓取，但**照常執行重算**。
+
+    為什麼需要它：GitHub Actions 單一 job 上限 6 小時，被砍時整個 job 立即死亡，
+    排在迴圈之後的 cv.run() 一步都不會執行——2026-08-10 就是這樣，
+    2360/2436 支的 EPS 已寫入 eps_quarterly，估值卻全部停在舊值，
+    而 cancelled 不觸發 `if: failure()`，連通知都沒有。
+    主動收尾則能保證「抓到的一定重算」，剩下的交給接力 job（跳過邏輯會自動接續）。
+    """
+    started    = time.monotonic()
     today      = date.today()
     start_date = (today - timedelta(days=180)).strftime("%Y-%m-%d")  # 查近 6 個月
     print(f"=== 季度 EPS 更新：{today} ===")
     print(f"查詢起始日：{start_date}")
+    if time_budget:
+        print(f"抓取時間預算：{time_budget:.0f} 分鐘（用完即收尾並重算，不強制砍斷）")
 
     all_ids      = get_all_stock_ids()
     latest_dates = get_latest_eps_dates()
@@ -145,7 +166,15 @@ def run():
     tracker     = fm.FailureTracker("季度 EPS 更新")
     print(f"需查詢：{total} 支（預估 {total * CALL_INTERVAL / 60:.0f} 分鐘）\n")
 
+    stopped_at = None
     for idx, sid in enumerate(stock_ids, 1):
+        # 時間預算用完就停止抓取，但不是中斷——底下的重算與 tracker.finish() 照跑
+        if time_budget and (time.monotonic() - started) / 60 >= time_budget:
+            stopped_at = idx - 1
+            print(f"\n⏱ 時間預算用完，已處理 {stopped_at}/{total} 支，"
+                  f"剩餘 {total - stopped_at} 支交給接力 job（跳過邏輯會自動接續）")
+            break
+
         # 單支失敗不中斷整批（4 小時的下載不該因一次逾時全毀），
         # 但結尾 tracker.finish() 會讓工作以失敗結束，避免缺漏無人知悉
         try:
@@ -193,16 +222,22 @@ def run():
 
         time.sleep(CALL_INTERVAL)
 
-    # 對有更新的股票重算完整估值（含歷史 P/E 區間）
+    # 對有更新的股票重算完整估值（含歷史 P/E 區間）。
+    # 這一步必須在時間預算之外：抓了卻沒重算，等於 eps_quarterly 與 valuations
+    # 不一致，而畫面上看不出來（2026-08-10 事故）
     if updated_ids:
         print(f"\n共 {len(updated_ids)} 支股票有新 EPS，重新計算估值...")
         cv.run(updated_ids)
     else:
         print("\n本次無新 EPS 資料。")
 
+    report_remaining(total - stopped_at if stopped_at is not None else 0)
     print("\n完成！")
     tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
 
 if __name__ == "__main__":
-    run()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--time-budget", type=float, default=None, metavar="分鐘",
+                    help="抓取階段的時間預算；用完即停止抓取並收尾重算（預設不限）")
+    run(**{k.replace("-", "_"): v for k, v in vars(ap.parse_args()).items()})
