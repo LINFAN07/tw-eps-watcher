@@ -40,6 +40,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     .eq('stock_id', code)
     .order('quarter_end_date')
 
+  // 4 是【資料量下限】，與 TTM 視窗無關：每股淨值是存量（某一天的帳面值），
+  // 不需要加總 12 個月，本路由整條都不呼叫 periodicity。這裡只是要求至少 4 個
+  // 時間點才畫得出有意義的百分位帶。
   if (!bvpsRaw || bvpsRaw.length < 4)
     return NextResponse.json({ error: '每股淨值資料不足' }, { status: 404 })
 

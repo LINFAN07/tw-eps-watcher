@@ -222,14 +222,20 @@ def share_factor_table(bvps: pd.DataFrame) -> pd.DataFrame:
 
 
 def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
-                       ttm_window: int | None,
+                       ttm: bool,
                        factors: pd.DataFrame | None = None) -> pd.DataFrame:
     """
     把季頻基本面攤成月末面板：每個月末取「當時已公布」的最新一筆。
-    ttm_window 不為 None 時先做滾動加總（EPS 需 TTM，每股淨值是存量不需要）。
+    ttm=True 時先加總成 12 個月（EPS 需 TTM，每股淨值是存量不需要）。
 
     factors 給定時，先把每季數值換算到該股的最新股數基準，再滾動加總——
     順序不可顛倒，每季 EPS 要對應自己那一季的股數。
+
+    這個參數原本叫 ttm_window、型別 int|None，十餘個呼叫端一律傳字面量 4——
+    但函式只判 `is not None`，那個 4 從未被讀取（真正的視窗由 ttm_windows()
+    依實際期別決定）。留著它的代價不在執行結果，而在**日後盤點硬編視窗時，
+    這十幾個 4 會先製造一批假警報，然後教會大家忽略這個訊號**。
+    改成布林後語意與實際行為一致（2026-08-11）。
     """
     df = fund.copy()
     df["quarter_end_date"] = pd.to_datetime(df["quarter_end_date"])
@@ -247,7 +253,7 @@ def fundamental_matrix(fund: pd.DataFrame, value_col: str, dates: list[str],
         df[value_col] = df[value_col] * df["factor"].fillna(1.0)
         df = df.sort_values(["stock_id", "quarter_end_date"])
 
-    if ttm_window is not None:
+    if ttm:
         # 加總「剛好涵蓋 12 個月」的期別，一律用 periodicity.ttm_windows。
         #
         # 這裡被同一個概念修過三次，每次都是因為回測與生產路徑各寫一份：
@@ -349,7 +355,7 @@ def fcf_ttm_ps_matrix(cashflows: pd.DataFrame, shares_divisor: pd.Series,
         lambda g: decumulate(g, ("operating_cf", "capex")))
     cf["fcf"] = cf["operating_cf"] + cf["capex"]
 
-    fcf_ttm = fundamental_matrix(cf, "fcf", dates, ttm_window=4)   # TTM 總額（元）
+    fcf_ttm = fundamental_matrix(cf, "fcf", dates, ttm=True)   # TTM 總額（元）
     return per_share(fcf_ttm, shares_divisor)
 
 
@@ -391,8 +397,8 @@ def build_panels(data: dict) -> dict:
     return {
         "adj":     adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates),
         "factors": factors,
-        "eps_ttm": fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors),
-        "bvps":    fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors),
+        "eps_ttm": fundamental_matrix(data["eps"],  "eps",                  dates, True,    factors),
+        "bvps":    fundamental_matrix(data["bvps"], "book_value_per_share", dates, False, factors),
         "ps":      revenue_ttm_ps_matrix(data["revenue"],   shares_divisor, dates),
         "pfcf":    fcf_ttm_ps_matrix(data["cashflows"], shares_divisor, dates),
     }

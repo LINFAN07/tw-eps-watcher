@@ -51,6 +51,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     .eq('stock_id', code)
     .order('year_month')
 
+  // 12 是【資料量下限】，不是 TTM 視窗：視窗由下方的 ttmMonthWindow() 決定，
+  // 它會檢查那 12 個月是否連續（缺月即回 null）。這裡只擋「連 12 筆都沒有」。
   if (!revenueRaw || revenueRaw.length < 12)
     return NextResponse.json({ error: '月營收資料不足（需至少 12 個月）' }, { status: 404 })
 

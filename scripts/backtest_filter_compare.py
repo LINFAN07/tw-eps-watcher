@@ -83,8 +83,8 @@ def main():
     print("組裝面板…")
     adj = bt.adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
     factors = bt.share_factor_table(data["bvps"])
-    eps_ttm = bt.fundamental_matrix(data["eps"],  "eps",                  dates, 4, factors)
-    bvps    = bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors)
+    eps_ttm = bt.fundamental_matrix(data["eps"],  "eps",                  dates, True, factors)
+    bvps    = bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, False, factors)
 
     mult, cheap, fair, exp = pe_bands(adj, eps_ttm, bt.PE_MIN, bt.PE_MAX)
     is_cheap = (mult <= cheap) & mult.notna()
@@ -92,8 +92,8 @@ def main():
     diffuse = width > DIFFUSE_HI
 
     roe = ((eps_ttm / bvps.where(bvps > 0)) * 100).reindex(index=adj.index, columns=adj.columns)
-    ttm_op  = bt.fundamental_matrix(income, "operating_income",  dates, 4)
-    ttm_rev = bt.fundamental_matrix(quarterly_revenue(mrev), "quarterly_revenue", dates, 4)
+    ttm_op  = bt.fundamental_matrix(income, "operating_income",  dates, True)
+    ttm_rev = bt.fundamental_matrix(quarterly_revenue(mrev), "quarterly_revenue", dates, True)
     margin = (ttm_op / ttm_rev.where(ttm_rev > 0) * 100).reindex(index=adj.index, columns=adj.columns)
 
     stocks = data["stocks"].set_index("stock_id")

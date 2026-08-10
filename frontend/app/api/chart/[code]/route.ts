@@ -40,6 +40,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     .select('quarter_end_date,eps')
     .eq('stock_id', code)
     .order('quarter_end_date')
+  // 2 是【資料量下限】，不是 TTM 期數：視窗由下方的 ttmWindows() 依實際期別決定
+  // （季報 4 期、半年報 2 期）。這裡只擋「連兩期都沒有」。
   if (!epsRaw || epsRaw.length < 2) return NextResponse.json({ error: 'Insufficient EPS' }, { status: 404 })
 
   // 計算 TTM EPS 序列。問的是「哪幾期加起來剛好 12 個月」，不是「最近 N 列」——

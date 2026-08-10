@@ -88,6 +88,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ cod
     .eq('stock_id', code)
     .order('quarter_end_date')
 
+  // 這兩個 4 是【資料量下限】，不是 TTM 視窗：視窗由下方的 ttmWindows() 依實際
+  // 期別決定，這裡只是「連最少的期數都沒有就不必往下算」。半年報公司一年 2 期，
+  // 門檻 4 對它們等於要求兩年——已知偏嚴，但 decumulate() 本來就推不出半年報的
+  // 單季現金流（找不到前一季），那類公司無論如何畫不出這張圖。
   if (!cfRaw || cfRaw.length < 4)
     return NextResponse.json({ error: '現金流資料不足（需至少 4 季）' }, { status: 404 })
 

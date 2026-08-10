@@ -85,12 +85,12 @@ def main():
     print("組裝面板…")
     adj = bt.adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
     factors = bt.share_factor_table(data["bvps"])
-    eps_ttm = bt.fundamental_matrix(data["eps"], "eps", dates, 4, factors)
+    eps_ttm = bt.fundamental_matrix(data["eps"], "eps", dates, True, factors)
 
     qrev = quarterly_revenue(mrev)
     # 利益率是比值，不傳 factors（分子分母皆為公司總額，非每股）
-    ttm_op  = bt.fundamental_matrix(income, "operating_income",  dates, 4)
-    ttm_rev = bt.fundamental_matrix(qrev,   "quarterly_revenue", dates, 4)
+    ttm_op  = bt.fundamental_matrix(income, "operating_income",  dates, True)
+    ttm_rev = bt.fundamental_matrix(qrev,   "quarterly_revenue", dates, True)
     margin = (ttm_op / ttm_rev.where(ttm_rev > 0) * 100).reindex(index=adj.index, columns=adj.columns)
 
     is_cheap, _ = bt.cheap_mask(adj, eps_ttm, bt.PE_MIN, bt.PE_MAX)

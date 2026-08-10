@@ -105,8 +105,8 @@ def main():
     adj = bt.adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
     factors = bt.share_factor_table(data["bvps"])
     bases = {
-        "P/E": (bt.fundamental_matrix(data["eps"], "eps", dates, 4, factors), bt.PE_MIN, bt.PE_MAX),
-        "P/B": (bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors),
+        "P/E": (bt.fundamental_matrix(data["eps"], "eps", dates, True, factors), bt.PE_MIN, bt.PE_MAX),
+        "P/B": (bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, False, factors),
                 bt.PB_MIN, bt.PB_MAX),
     }
 

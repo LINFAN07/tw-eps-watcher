@@ -53,8 +53,8 @@ def main():
     print("組裝面板…")
     adj = bt.adjusted_price_matrix(data["prices"], data["dividends"], data["factors"], dates)
     factors = bt.share_factor_table(data["bvps"])
-    eps_ttm = bt.fundamental_matrix(data["eps"],  "eps",                  dates, 4,    factors)
-    bvps    = bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, None, factors)
+    eps_ttm = bt.fundamental_matrix(data["eps"],  "eps",                  dates, True,    factors)
+    bvps    = bt.fundamental_matrix(data["bvps"], "book_value_per_share", dates, False, factors)
 
     is_cheap, _ = bt.cheap_mask(adj, eps_ttm, bt.PE_MIN, bt.PE_MAX)
     roe = (eps_ttm / bvps.where(bvps > 0)) * 100
