@@ -55,16 +55,13 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, os.path.dirname(__file__))
-import audit_external as ax
-import calculate_valuation as cv
-import finmind_client as fm
+import finmind_client as fm   # noqa: E402（純 requests，import 無資料庫副作用）
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 FINMIND_TOKEN = os.getenv("FINMIND_TOKEN")
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 CALL_INTERVAL = 6.5          # FinMind 免費版速率限制
 EPS_EPSILON   = 0.005        # 小於此視為同值（EPS 揭露到小數點後兩位）
@@ -99,7 +96,7 @@ def restatements(fresh: list[dict], existing: dict[tuple[str, str], float]) -> l
             > EPS_EPSILON]
 
 
-def db_eps(stock_ids: list[str], since: str) -> dict[tuple[str, str], float]:
+def db_eps(supabase, stock_ids: list[str], since: str) -> dict[tuple[str, str], float]:
     """取回這批股票在視窗內的既有單季 EPS，用來比對 FinMind 有沒有變。"""
     existing: dict[tuple[str, str], float] = {}
     for i in range(0, len(stock_ids), 100):
@@ -120,6 +117,13 @@ def db_eps(stock_ids: list[str], since: str) -> dict[tuple[str, str], float]:
 
 
 def run(dry_run: bool = False):
+    # audit_external 一 import 就 create_client，資料庫連線也在這裡才建立：
+    # tests/test_restated_eps.py 要在【沒有資料庫密鑰】的 CI 步驟 import 本檔的
+    # candidates()／restatements() 兩個純函式——這些搬回模組層級的話，本機有
+    # .env 照樣全綠，只有 CI 會在 import 階段死（2026-08-10 首次排程即如此）。
+    import audit_external as ax
+    supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
     print("=== 更正申報回補 ===")
     if dry_run:
         print("（--dry-run：只偵測，不寫入）")
@@ -137,7 +141,7 @@ def run(dry_run: bool = False):
               f"我們累計 {r['ours']} vs 交易所 {r['theirs']}")
 
     since    = min(targets.values())
-    existing = db_eps(sorted(targets), since)
+    existing = db_eps(supabase, sorted(targets), since)
 
     restated: list[str] = []      # 真的是更正申報，已寫回
     divergent: list[str] = []     # FinMind 與我們一致，但都與交易所不同
@@ -178,6 +182,9 @@ def run(dry_run: bool = False):
         time.sleep(CALL_INTERVAL)
 
     if restated and not dry_run:
+        # 到用時才 import：它會拉 pandas/numpy 且 import 當下即 create_client，
+        # 「無不符」與 --dry-run 兩條常見路徑都不必付這個成本（延後理由同函式開頭）
+        import calculate_valuation as cv
         print(f"\n{len(restated)} 支有更正，重算估值...")
         cv.run(restated)
 

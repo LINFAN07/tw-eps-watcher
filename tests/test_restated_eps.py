@@ -1,6 +1,11 @@
 """
 更正申報回補的分類邏輯驗證（純函式，不連資料庫、不呼叫 FinMind）。
 
+「不連資料庫」成立的前提：`refetch_restated_eps.py` 把 audit_external／
+calculate_valuation 的 import 與 create_client 延後到 run() 才發生。
+搬回模組層級的話，本機有 .env 照樣全綠，只有沒密鑰的 CI 步驟會在
+import 階段死（2026-08-10 weekly_validate 首次排程即因此整個 job 失敗）。
+
 為什麼要有這支：`refetch_restated_eps.py` 要在三種長得很像的情形之間做出
 不同處置，判斷錯了不會報錯，只會安靜地寫錯資料或安靜地不寫：
 
