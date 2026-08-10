@@ -53,9 +53,17 @@ jobs:
       - name: 排程稽核（確認每支腳本都真的會被執行）
         run: python scripts/audit_workflows.py
 
-      # 交叉驗證：同一個數字用兩條路徑重算比對，抓單位錯、累計誤用、基準不符。
-      # 內部一致性檢查抓不到這類錯誤——那些數字彼此自洽，規則全部會通過。
+      # ── 以下五支是【資料稽核】，一律 continue-on-error，最後統一判定成敗。
+      #
+      # 上面的測試步驟維持 fail-fast（程式碼本身壞了，後面跑也沒意義），
+      # 但稽核不同：五支各驗各的、彼此獨立，任何一支先失敗都不該讓其餘的閉嘴。
+      # 2026-08-10 一天內兩次踩到：早上 import 錯誤讓五支全沒跑，修好後
+      # 交叉驗證失敗又讓後面四支全沒跑——每修一次才看到下一個問題，
+      # 而失敗信因 Outlook 停用基本驗證早已寄不出去，等於整批稽核無聲熄燈。
+      # 稽核漏跑比不稽核更糟：它會發出「已經驗過」的訊號。
       - name: 交叉驗證健檢（衍生值 vs 原始資料重算）
+        id: cross_check
+        continue-on-error: true
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
@@ -66,10 +74,13 @@ jobs:
       # 公司事後更正財報，數字就永久停在第一版。2026-07-27：1591 的 2026Q1
       # 停在 -0.08，官方已更正為 -1.18。
       #
-      # ⚠️ 必須排在 audit_external.py【之前】：那支發現不符會 exit 1，
-      # 而步驟失敗會中止整個 job——排在後面等於永遠不會執行。
-      # 順序也讓稽核看到的是修完之後的狀態，剩下的才是真的需要人看的。
+      # ⚠️ 必須排在 audit_external.py【之前】：先回補再稽核，稽核看到的才是
+      # 修完之後的狀態，剩下的才是真的需要人看的。
+      # （原因不再是「排在後面永遠不會執行」——自 2026-08-10 起稽核步驟一律
+      #   continue-on-error，順序純粹是先修後驗的邏輯需要。）
       - name: 更正申報回補（重抓與交易所對不上的 EPS）
+        id: refetch
+        continue-on-error: true
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
@@ -81,12 +92,16 @@ jobs:
       # 本專案四次事故有三次正是這一類，且都是靠人工跨來源比對才發現的。
       # 2026-07-22 首跑即抓出面額寫死造成 23% 的每股淨值錯誤（4763 目標價高估 22 倍）。
       - name: 對外比對稽核（交易所官方申報值）
+        id: external
+        continue-on-error: true
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
         run: python scripts/audit_external.py
 
       - name: 執行估值驗證（內部一致性 + 與 FinMind 跨來源比對）
+        id: validate
+        continue-on-error: true
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
@@ -101,10 +116,40 @@ jobs:
       # 不受採樣頻率影響。結果寫入 unadjusted_capital_events，前端據此排除排行榜。
       # 耗時約 5 分鐘（要載入候選股全歷史價格），故排在所有檢查之後。
       - name: 未還原資本事件普查
+        id: capital_events
+        continue-on-error: true
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
         run: python scripts/audit_capital_events.py
+
+      # 五支稽核全部跑完後才判定成敗。少了這一步，continue-on-error 會讓
+      # 整個 job 永遠是綠的——那比原本的「中途中止」更糟，因為它連紅燈都不給。
+      - name: 稽核結果總判定
+        run: |
+          declare -A r=(
+            ["交叉驗證健檢"]="${{ steps.cross_check.outcome }}"
+            ["更正申報回補"]="${{ steps.refetch.outcome }}"
+            ["對外比對稽核"]="${{ steps.external.outcome }}"
+            ["估值驗證"]="${{ steps.validate.outcome }}"
+            ["資本事件普查"]="${{ steps.capital_events.outcome }}"
+          )
+          failed=0
+          echo "=== 五支稽核的結果 ==="
+          for name in "${!r[@]}"; do
+            if [ "${r[$name]}" = "success" ]; then
+              echo "  ✅ $name"
+            else
+              echo "  ❌ $name（${r[$name]}）"
+              failed=1
+            fi
+          done
+          [ $failed -eq 0 ] && echo "全部通過" || {
+            echo ""
+            echo "上方 ❌ 的步驟各自的日誌裡有明細。稽核彼此獨立，"
+            echo "一支紅燈不代表其他支的結果不可信。"
+            exit 1
+          }
 
       - name: 驗證失敗 Email 通知
         if: failure()
