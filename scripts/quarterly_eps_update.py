@@ -52,10 +52,16 @@ def finmind_get(dataset, stock_id, start_date) -> list:
 
 
 def get_all_stock_ids() -> list[str]:
-    """取得所有股票代碼（分頁）"""
+    """
+    取得所有股票代碼（分頁）。
+
+    order 不可省：無排序的多次分頁查詢，Postgres 不保證跨頁順序一致，會重複或遺漏
+    （見 CLAUDE.md 平台限制）。順序穩定也是 --after 斷點續傳成立的前提。
+    """
     all_ids, offset = [], 0
     while True:
-        resp = supabase.table("stocks").select("stock_id").range(offset, offset + 999).execute()
+        resp = (supabase.table("stocks").select("stock_id")
+                .order("stock_id").range(offset, offset + 999).execute())
         all_ids.extend(r["stock_id"] for r in resp.data)
         if len(resp.data) < 1000:
             break
@@ -121,23 +127,29 @@ def target_quarter(today: date) -> str | None:
     return None
 
 
-def report_remaining(count: int):
-    """把剩餘支數寫進 GITHUB_OUTPUT，供 workflow 決定要不要啟動接力 job"""
+def report_output(**kv):
+    """寫進 GITHUB_OUTPUT，供 workflow 決定要不要啟動接力 job、從哪裡接續"""
     path = os.getenv("GITHUB_OUTPUT")
     if path:
         with open(path, "a", encoding="utf-8") as f:
-            f.write(f"remaining={count}\n")
+            for k, v in kv.items():
+                f.write(f"{k}={v}\n")
 
 
-def run(time_budget: float | None = None):
+def run(time_budget: float | None = None, after: str | None = None):
     """
     time_budget：抓取階段的時間預算（分鐘）。用完就停止抓取，但**照常執行重算**。
+    after：只處理排序在此代碼【之後】的股票，供接力 job 從斷點續跑。
 
-    為什麼需要它：GitHub Actions 單一 job 上限 6 小時，被砍時整個 job 立即死亡，
-    排在迴圈之後的 cv.run() 一步都不會執行——2026-08-10 就是這樣，
+    為什麼需要 time_budget：GitHub Actions 單一 job 上限 6 小時，被砍時整個 job
+    立即死亡，排在迴圈之後的 cv.run() 一步都不會執行——2026-08-10 就是這樣，
     2360/2436 支的 EPS 已寫入 eps_quarterly，估值卻全部停在舊值，
     而 cancelled 不觸發 `if: failure()`，連通知都沒有。
-    主動收尾則能保證「抓到的一定重算」，剩下的交給接力 job（跳過邏輯會自動接續）。
+    主動收尾則能保證「抓到的一定重算」。
+
+    為什麼還需要 after：光靠「已有本季資料就跳過」接不上——那只對【查到新資料】
+    的股票生效，尚未申報的公司下一段會被原封不動重查一次。2026-08-10 實測：
+    第一段處理 4 支後，第二段的待查數仍是 1973 而非 1969，第一段的工等於白做。
     """
     started    = time.monotonic()
     today      = date.today()
@@ -161,19 +173,26 @@ def run(time_budget: float | None = None):
         stock_ids = all_ids
         print("非財報季，全部股票皆需查詢")
 
+    # 斷點續跑：清單已依 stock_id 排序，字串比較即可切出「還沒輪到的那一段」
+    if after:
+        before = len(stock_ids)
+        stock_ids = [s for s in stock_ids if s > after]
+        print(f"接續上一段（{after} 之後）：略過已查過的 {before - len(stock_ids)} 支")
+
     total       = len(stock_ids)
     updated_ids = []
     tracker     = fm.FailureTracker("季度 EPS 更新")
     print(f"需查詢：{total} 支（預估 {total * CALL_INTERVAL / 60:.0f} 分鐘）\n")
 
-    stopped_at = None
+    stopped_at, last_id = None, after or ""
     for idx, sid in enumerate(stock_ids, 1):
         # 時間預算用完就停止抓取，但不是中斷——底下的重算與 tracker.finish() 照跑
         if time_budget and (time.monotonic() - started) / 60 >= time_budget:
             stopped_at = idx - 1
-            print(f"\n⏱ 時間預算用完，已處理 {stopped_at}/{total} 支，"
-                  f"剩餘 {total - stopped_at} 支交給接力 job（跳過邏輯會自動接續）")
+            print(f"\n⏱ 時間預算用完，已處理 {stopped_at}/{total} 支"
+                  f"（最後：{last_id or '無'}），剩餘 {total - stopped_at} 支交給接力 job")
             break
+        last_id = sid
 
         # 單支失敗不中斷整批（4 小時的下載不該因一次逾時全毀），
         # 但結尾 tracker.finish() 會讓工作以失敗結束，避免缺漏無人知悉
@@ -231,7 +250,8 @@ def run(time_budget: float | None = None):
     else:
         print("\n本次無新 EPS 資料。")
 
-    report_remaining(total - stopped_at if stopped_at is not None else 0)
+    report_output(remaining=total - stopped_at if stopped_at is not None else 0,
+                  last_id=last_id)
     print("\n完成！")
     tracker.finish()   # 有任何抓取失敗就以 exit 1 結束，觸發通知
 
@@ -240,4 +260,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--time-budget", type=float, default=None, metavar="分鐘",
                     help="抓取階段的時間預算；用完即停止抓取並收尾重算（預設不限）")
-    run(**{k.replace("-", "_"): v for k, v in vars(ap.parse_args()).items()})
+    ap.add_argument("--after", default=None, metavar="股票代碼",
+                    help="只處理排序在此之後的股票，供接力 job 從斷點續跑")
+    run(**vars(ap.parse_args()))

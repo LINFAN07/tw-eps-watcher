@@ -43,6 +43,7 @@ jobs:
     timeout-minutes: 350        # 比 --time-budget 多 30 分鐘，留給重算與收尾
     outputs:
       remaining: ${{ steps.eps.outputs.remaining }}
+      last_id:   ${{ steps.eps.outputs.last_id }}
 
     steps:
       - name: Checkout
@@ -99,13 +100,18 @@ jobs:
       - name: 安裝套件
         run: pip install requests supabase python-dotenv pandas
 
+      # --after 從第一段的斷點續跑。第一段若被 timeout 砍，last_id 是空字串，
+      # 腳本會退化成從頭掃（重複但不會漏）——這是安全的一邊。
       - name: 執行季度 EPS 更新（接力）
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
         working-directory: scripts
-        run: python quarterly_eps_update.py --time-budget ${{ inputs.time_budget || '320' }}
+        run: >-
+          python quarterly_eps_update.py
+          --time-budget ${{ inputs.time_budget || '320' }}
+          --after "${{ needs.update.outputs.last_id }}"
 
   # 逐一檢查 needs 的 result，不可用 `failure() || cancelled()`：
   # job 被 timeout-minutes 砍掉時 result 是 'cancelled'，而 failure() 只認 'failure'；

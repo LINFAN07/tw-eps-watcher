@@ -53,6 +53,15 @@ jobs:
       - name: 排程稽核（確認每支腳本都真的會被執行）
         run: python scripts/audit_workflows.py
 
+      # 硬編 TTM 視窗掃描：期數判定已長出十份實作，每次都事後才發現。
+      # 純靜態、不連資料庫（刻意不依賴密鑰——2026-08-10 的教訓是需要密鑰的稽核
+      # 會在無密鑰環境整批失效），故與上面的純函式測試放在一起先擋。
+      - name: 硬編視窗掃描器的偵測能力
+        run: python tests/test_hardcoded_windows.py
+
+      - name: 硬編 TTM 視窗掃描（防第十一份）
+        run: python scripts/audit_hardcoded_windows.py
+
       # ── 以下五支是【資料稽核】，一律 continue-on-error，最後統一判定成敗。
       #
       # 上面的測試步驟維持 fail-fast（程式碼本身壞了，後面跑也沒意義），
