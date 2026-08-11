@@ -48,6 +48,7 @@
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -440,9 +441,69 @@ def eps_compare() -> tuple[list[str], list[str], list[dict]]:
                    fetch=db_values_ytd, rel_floor=EPS_TOLERANCE_REL)
 
 
+# ── 已判定為「來源分歧」者列報但不計入失敗 ────────────────────────────
+#
+# 有一類不符是【修不掉】的：我們與 FinMind 說同一個數、交易所說另一個數。
+# 兩個來源分歧而我們無從裁決，硬填交易所的值等於在同一條序列裡混用兩個來源
+# （違反資料誠信原則第 2 條），所以 refetch_restated_eps.py 刻意不寫入、只列報。
+# 但若每週為同一批修不掉的分歧紅燈，久了就沒人看紅燈——下一個真正的問題
+# 正是在那時候被淹沒的。
+#
+# **判定交給機器，不做人工白名單。** Q2 財報季一開始就同時出現 8 筆這類分歧
+# （2026-08-11 實測），逐筆登記很快就會變成沒人維護的清單。改讀
+# refetch_restated_eps.py 的判定結果——那支已經重抓 FinMind 比對過，
+# 它說「FinMind 與我們一致」才算數。
+#
+# 三道防腐措施，缺一不可：
+#   1. 值要對得上：任一邊的數字變了（交易所更正、我們重抓到新值）就不再豁免
+#   2. 檔案要新鮮：超過 DIVERGENCE_MAX_AGE_DAYS 一律不採信，避免拿陳年判定
+#      掩蓋今天的問題
+#   3. 仍然列印出來：豁免的是「失敗」不是「可見性」
+DIVERGENCE_FILE = os.path.join(os.path.dirname(__file__), "..", ".divergences.json")
+DIVERGENCE_MAX_AGE_DAYS = 7      # 比週排程間隔略長，容許排程遲到
+
+
+def load_divergences() -> tuple[set[tuple], str | None]:
+    """讀 refetch_restated_eps 的判定結果 → ({(代碼, 季別, 我們的值, 交易所值)}, 產生日)"""
+    try:
+        with open(DIVERGENCE_FILE, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set(), None
+    stamped = payload.get("generated_on")
+    try:
+        age = (date.today() - date.fromisoformat(stamped)).days
+    except (TypeError, ValueError):
+        return set(), None
+    if age > DIVERGENCE_MAX_AGE_DAYS:
+        print(f"  （來源分歧判定檔已過期 {age} 天，本次不採信）")
+        return set(), stamped
+    return {(r["stock_id"], r["quarter_end_date"],
+             round(float(r["ours"]), 2), round(float(r["theirs"]), 2))
+            for r in payload.get("divergences", [])}, stamped
+
+
+def split_known(bad: list[str], recs: list[dict]) -> tuple[list[str], list[str]]:
+    """把逐筆不符拆成「未判定的（計入失敗）」與「已判定為來源分歧（僅列報）」"""
+    known_keys, stamped = load_divergences()
+    unknown, known = [], []
+    for line, r in zip(bad, recs):
+        key = (r["stock_id"], r["quarter_end_date"],
+               round(float(r["ours"]), 2), round(float(r["theirs"]), 2))
+        (known if key in known_keys else unknown).append(
+            f"{line}（{stamped} 判定：FinMind 與我們一致）" if key in known_keys else line)
+    return unknown, known
+
+
 def check_eps() -> list[str]:
-    bad, coverage, _ = eps_compare()
-    return bad + coverage
+    bad, coverage, recs = eps_compare()
+    unknown, known = split_known(bad, recs)
+    if known:
+        print(f"\n  已判定為來源分歧 {len(known)} 筆（列報但不計入失敗，"
+              f"交易所與 FinMind 說法不同、我們無從裁決）：")
+        for line in known:
+            print(f"    · {line}")
+    return unknown + coverage
 
 
 def check_bvps() -> list[str]:

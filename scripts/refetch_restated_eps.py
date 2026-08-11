@@ -30,6 +30,11 @@
      混用兩個來源（違反「不得以另一個指標頂替」），而且我們無從判斷誰對。
      只列報，讓 `audit_external.py` 繼續紅燈，由人去看。
      實例：3521 的 2026Q2，我們與 FinMind 都是累計 2.10，交易所 1.96。
+     **這不是罕見個案**：2026-08-11（Q2 申報期）同時出現 8 筆，差距 0.05~0.31、
+     方向有正有負。故本支會把判定結果寫進 `.divergences.json`，
+     `audit_external.py` 讀了之後將這批列報但不計入失敗——修不掉的事每週紅一次，
+     只會讓人養成不看紅燈的習慣，下一個真正的問題就是在那時被淹沒的。
+     豁免綁在數值上且有 7 天時效，任一邊改變或判定過期就重新舉手。
   3. **抓取失敗** → 以 exit 1 結束（誠信原則第 5 條）。
 
 ## 盲區（不要以為跑綠燈就沒有更正遺漏）
@@ -47,9 +52,11 @@
 """
 
 import argparse
+import json
 import os
 import sys
 import time
+from datetime import date
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -94,6 +101,24 @@ def restatements(fresh: list[dict], existing: dict[tuple[str, str], float]) -> l
     return [r for r in fresh
             if abs(existing.get((r["stock_id"], r["quarter_end_date"]), r["eps"]) - r["eps"])
             > EPS_EPSILON]
+
+
+def write_divergences(recs: list[dict]):
+    """
+    寫出「已確認為來源分歧」的明細，供 audit_external.py 判讀。
+
+    帶 generated_on 是必要的：那支會拒絕採信過期的判定，避免拿上個月的結論
+    掩蓋這週新出現的不符。內容含雙方數值，任一邊變了就對不上、不再豁免。
+    """
+    payload = {"generated_on": date.today().isoformat(),
+               "divergences": [{"stock_id": r["stock_id"],
+                                "quarter_end_date": r["quarter_end_date"],
+                                "ours": float(r["ours"]), "theirs": float(r["theirs"])}
+                               for r in recs]}
+    path = os.path.join(os.path.dirname(__file__), "..", ".divergences.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print(f"  （已記錄 {len(recs)} 筆來源分歧判定，供對外比對稽核判讀）")
 
 
 def db_eps(supabase, stock_ids: list[str], since: str) -> dict[tuple[str, str], float]:
@@ -188,10 +213,17 @@ def run(dry_run: bool = False):
         print(f"\n{len(restated)} 支有更正，重算估值...")
         cv.run(restated)
 
+    # 把判定結果留給 audit_external.py：它只看得到「我們 vs 交易所」，
+    # 分不出「該重抓的更正」與「修不掉的來源分歧」——那個判斷只有這裡做得出來
+    # （因為只有這裡呼叫了 FinMind）。寫成檔案而非資料庫：它是本次執行的判定，
+    # 有時效性，而且兩支腳本在同一個 workflow job 內依序執行。
+    if not dry_run:
+        write_divergences([r for r in recs if r["stock_id"] in set(divergent)])
+
     print(f"\n更正並寫回 {len(restated)} 支；來源分歧未處理 {len(divergent)} 支")
     if divergent:
-        # 刻意不 exit 1：這不是可以靠重抓修好的問題，而 audit_external.py
-        # 已經會為同一批股票紅燈。這裡再叫一次只是同一件事響兩個鈴。
+        # 刻意不 exit 1：這不是可以靠重抓修好的問題。audit_external.py 會讀上面
+        # 那份判定，把這批列報但不計入失敗——修不掉的事每週紅一次只會讓人不看紅燈。
         print(f"  來源分歧（FinMind 與交易所不合，須人工判斷）：{', '.join(divergent)}")
 
     tracker.finish()   # 有任何抓取失敗就 exit 1，觸發通知

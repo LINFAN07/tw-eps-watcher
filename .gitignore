@@ -8,6 +8,11 @@ scripts/init_progress.json
 # 執行日誌（本機暫存，不需版控）
 logs/
 
+# 來源分歧判定（refetch_restated_eps 產生、audit_external 判讀）。
+# 是「本次執行的判定」而非設定：進版控會讓陳年結論被拿來掩蓋當下的不符，
+# 而該檔的時效檢查（7 天）正是為了防這件事。
+.divergences.json
+
 # 回測快取與逐筆訊號明細（可重跑產生，signals.csv 約 8MB，不進版控）
 .backtest_cache/
 backtest_results/signals.csv
