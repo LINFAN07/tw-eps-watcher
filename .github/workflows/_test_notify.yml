@@ -1,0 +1,27 @@
+name: （臨時）失敗通知測試
+
+# 只驗證 notify-failure 這個 composite action 能不能開 issue。
+# 驗證完就刪除——不掛任何排程，只能手動觸發。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 故意失敗
+        run: exit 1
+
+      - name: 失敗通知
+        if: failure()
+        uses: ./.github/actions/notify-failure
+        with:
+          workflow-name: 失敗通知機制測試
+          note: 這是通知機制的驗證，不是真的排程問題。驗證完可直接關閉本 issue。

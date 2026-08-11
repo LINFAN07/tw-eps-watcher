@@ -1,0 +1,46 @@
+name: 排程失敗通知
+description: >-
+  失敗時開一張 GitHub issue（同標題已有開啟中的就留言，不重複開）。
+  取代原本的 SMTP 寄信——微軟已停用 Outlook 的基本驗證，那條路徑自 2026-07 起
+  每次都是 "535 Authentication unsuccessful"，等於所有排程的失敗都是無聲的。
+  改用 issue 的理由：不需外部服務、不需自備密鑰（用內建 github.token），
+  且 GitHub 會依帳號的通知設定寄信，等於把「能不能收到通知」交給平台維護。
+
+inputs:
+  workflow-name:
+    description: 顯示在 issue 標題的工作名稱
+    required: false
+    default: ${{ github.workflow }}
+  note:
+    description: 附加說明（例如「本次為超時而非錯誤」）
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        WF: ${{ inputs.workflow-name }}
+        NOTE: ${{ inputs.note }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        title="❌ 排程失敗：${WF}"
+        body="$(printf '執行連結：%s\n\n觸發方式：%s\n分支：%s\n時間（UTC）：%s\n\n%s\n' \
+                "$RUN_URL" "${{ github.event_name }}" "${{ github.ref_name }}" \
+                "$(date -u '+%Y-%m-%d %H:%M')" "$NOTE")"
+
+        # 同一個工作反覆失敗時留言而非開新 issue——否則每週一張，
+        # 很快就會淹沒 issue 列表，那跟沒有通知一樣糟
+        existing="$(gh issue list --state open --search "\"${title}\" in:title" \
+                    --json number --jq '.[0].number // empty' || true)"
+        if [ -n "$existing" ]; then
+          gh issue comment "$existing" --body "$body"
+          echo "已在既有 issue #${existing} 留言"
+        else
+          gh issue create --title "$title" --body "$body" --label "排程失敗" \
+            || gh issue create --title "$title" --body "$body"   # 標籤不存在時退而求其次
+          echo "已開立新 issue"
+        fi
