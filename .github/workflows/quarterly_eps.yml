@@ -37,6 +37,10 @@ on:
 # 額度不會因此變多：工作量相同，只是繞開單一 job 的 6 小時牆；
 # 且 remaining=0 時第二個 job 根本不啟動（財報季後段幾乎都是這種情形）。
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -127,17 +131,15 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
-      - name: 排程失敗 Email 通知
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          username: qwert0708@hotmail.com
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "❌ [台股估值] 季度 EPS 更新失敗或超時"
-          to: qwert0708@hotmail.com
-          from: qwert0708@hotmail.com
-          body: |
-            季度 EPS 更新排程失敗或超時，請至以下連結查看錯誤日誌：
+      # 本地 composite action 要先 checkout 才取得到
+      - name: Checkout
+        uses: actions/checkout@v4
 
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # 失敗通知改開 GitHub issue：Outlook 已停用 SMTP 基本驗證，
+      # 原本的寄信自 2026-07 起每次都是 535 認證失敗，等於無聲。
+      # 此處【不可】加 if: failure()——本 job 是靠上面的 needs 條件才啟動的，
+      # job 內部沒有任何失敗步驟，加了它就永遠不會執行（通知再次變無聲）。
+      - name: 失敗通知
+        uses: ./.github/actions/notify-failure
+        with:
+          workflow-name: 季度 EPS 更新（失敗或超時）

@@ -29,6 +29,10 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   recalc:
     runs-on: ubuntu-latest
@@ -136,19 +140,10 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/audit_external.py
 
-      - name: 失敗 Email 通知
+      # 失敗通知改開 GitHub issue：Outlook 已停用 SMTP 基本驗證，
+      # 原本的寄信自 2026-07 起每次都是 535 認證失敗，等於無聲
+      - name: 失敗通知
         if: failure()
-        uses: dawidd6/action-send-mail@v3
+        uses: ./.github/actions/notify-failure
         with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          username: qwert0708@hotmail.com
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "❌ [台股估值] 全庫重算鏈失敗"
-          to: qwert0708@hotmail.com
-          from: qwert0708@hotmail.com
-          body: |
-            全庫重算鏈執行失敗，資料庫可能停在半完成狀態
-            （部分股票已用新邏輯重算、部分仍是舊值）。
-
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          workflow-name: 全庫重算鏈

@@ -7,6 +7,10 @@ on:
     - cron: '0 5 1 * *'
   workflow_dispatch:  # 允許手動觸發
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -43,18 +47,10 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/refresh_industry.py
 
-      - name: 排程失敗 Email 通知
+      # 失敗通知改開 GitHub issue：Outlook 已停用 SMTP 基本驗證，
+      # 原本的寄信自 2026-07 起每次都是 535 認證失敗，等於無聲
+      - name: 失敗通知
         if: failure()
-        uses: dawidd6/action-send-mail@v3
+        uses: ./.github/actions/notify-failure
         with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          username: qwert0708@hotmail.com
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "❌ [台股估值] 新股發現失敗"
-          to: qwert0708@hotmail.com
-          from: qwert0708@hotmail.com
-          body: |
-            新股發現排程執行失敗，請至以下連結查看錯誤日誌：
-
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          workflow-name: 新股發現

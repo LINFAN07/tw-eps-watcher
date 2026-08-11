@@ -6,6 +6,10 @@ on:
     - cron: '0 1 * * 1'
   workflow_dispatch:  # 允許手動觸發
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -160,18 +164,10 @@ jobs:
             exit 1
           }
 
-      - name: 驗證失敗 Email 通知
+      # 失敗通知改開 GitHub issue：Outlook 已停用 SMTP 基本驗證，
+      # 原本的寄信自 2026-07 起每次都是 535 認證失敗，等於無聲
+      - name: 失敗通知
         if: failure()
-        uses: dawidd6/action-send-mail@v3
+        uses: ./.github/actions/notify-failure
         with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          username: qwert0708@hotmail.com
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "❌ [台股估值] 每週估值一致性驗證失敗"
-          to: qwert0708@hotmail.com
-          from: qwert0708@hotmail.com
-          body: |
-            每週估值一致性驗證發現嚴重問題，請至以下連結查看錯誤日誌：
-
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          workflow-name: 每週估值一致性驗證

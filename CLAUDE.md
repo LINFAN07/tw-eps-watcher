@@ -334,6 +334,20 @@ TTM EPS >> 5年均值（> 3 倍）     → 顯示「獲利高峰」警告
 | `dividends_update.yml` | 7 月／9 月各一次 | 股利（FinMind）+ 重算 | ~6.5 小時 |
 | `weekly_validate.yml` | 每週一 09:00 | 估值一致性抽驗 + 未還原資本事件普查 | ~7 分 |
 
+**排程失敗一律開 GitHub issue**（`.github/actions/notify-failure`），不再寄信：
+微軟停用 Outlook 的 SMTP 基本驗證後，原本的寄信自 2026-07 起每次都是
+`535 Authentication unsuccessful`，等於所有排程的失敗都是無聲的。
+改用 issue 的理由是不需外部服務、不需自備密鑰（用內建 `github.token`），
+且「能不能收到通知」交給平台維護。同一個工作反覆失敗會留言而非開新張，
+否則每週一張很快就淹沒列表——那跟沒有通知一樣糟。
+
+**兩個容易讓通知重新變無聲的陷阱**（都踩過）：
+- 本地 composite action 要先 `checkout` 才取得到，通知步驟前沒有它就會失敗
+- 用 `needs.*.result` 把關的**獨立 notify job**，內部**不可**再寫 `if: failure()`
+  ——那個 job 裡沒有失敗步驟，加了就永遠不執行
+- job 被 `timeout-minutes` 砍掉時 result 是 `cancelled`，`failure()` 與
+  `cancelled()` **兩個內建函式都抓不到**，必須逐一比對 `needs.<job>.result`
+
 ### 資料來源選擇原則
 
 **優先用 TWSE／TPEx OpenAPI 的整批端點**，只在沒有對應端點時才用 FinMind：

@@ -11,6 +11,10 @@ on:
     - cron: '0 20 20 * *'
   workflow_dispatch:  # 允許手動觸發
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   thin:
     runs-on: ubuntu-latest
@@ -38,21 +42,10 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/thin_daily_prices.py
 
-      - name: 排程失敗 Email 通知
+      # 失敗通知改開 GitHub issue：Outlook 已停用 SMTP 基本驗證，
+      # 原本的寄信自 2026-07 起每次都是 535 認證失敗，等於無聲
+      - name: 失敗通知
         if: failure()
-        uses: dawidd6/action-send-mail@v3
+        uses: ./.github/actions/notify-failure
         with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          username: qwert0708@hotmail.com
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "❌ [台股估值] 股價週採樣瘦身失敗"
-          to: qwert0708@hotmail.com
-          from: qwert0708@hotmail.com
-          body: |
-            股價週採樣瘦身排程執行失敗，請至以下連結查看錯誤日誌：
-
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-            注意：瘦身未執行不會立即造成問題，但容量會以每年約 50MB 的速度
-            重新增長。請確認資料庫是否已建立 thin_daily_prices() 函式。
+          workflow-name: 股價週採樣瘦身
